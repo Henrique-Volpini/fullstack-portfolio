@@ -1,0 +1,36 @@
+# Python / Django
+.venv/
+__pycache__/
+*.py[cod]
+db.sqlite3
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Node / React / Vite
+node_modules/
+dist/
+dist-ssr/
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
