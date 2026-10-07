@@ -90,7 +90,6 @@
 }
 
 .home {
-  /* Ajuste estas alturas para validar o tamanho de cada seção no desktop. */
   --home-about-height: clamp(38rem, 70svh, 42rem);
   --home-stack-height: clamp(19rem, 34svh, 22rem);
   --home-contact-height: clamp(33rem, 65svh, 38rem);
@@ -411,8 +410,10 @@
 
 .about-company img {
   display: block;
+  order: 1;
   width: min(8rem, 36%);
   height: auto;
+  margin-left: auto;
   opacity: 0.76;
   filter: saturate(0.8);
 }
@@ -438,13 +439,46 @@
   line-height: 1.75;
 }
 
+.about-reveal {
+  position: relative;
+  border-bottom: 1px solid var(--color-transparent);
+}
+
+.about-reveal::after {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: var(--color-border);
+  content: "";
+  pointer-events: none;
+  transition: top 360ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.about-reveal-content {
+  clip-path: inset(0 0 0 0);
+  transition: clip-path 360ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.about-reveal[data-phase="closing"]::after {
+  top: 0;
+}
+
+.about-reveal[data-phase="closing"] .about-reveal-content {
+  clip-path: inset(0 0 100% 0);
+}
+
+.about-details-frame {
+  margin: clamp(2.25rem, 5vw, 3.5rem) 0 0;
+  border-top: 1px solid var(--color-border);
+}
+
 .about-details {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  margin: clamp(2.25rem, 5vw, 3.5rem) 0 0;
+  margin: 0;
   padding: 0;
-  border-top: 1px solid var(--color-border);
-  border-bottom: 1px solid var(--color-border);
 }
 
 .about-details div {
@@ -811,7 +845,6 @@
   }
 
   .home {
-    /* Alturas para celular: o texto ocupa mais linhas nesta largura. */
     --home-about-height: 70rem;
     --home-stack-height: 27rem;
     --home-contact-height: 46rem;

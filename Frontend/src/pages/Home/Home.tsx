@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent } from "react";
+import { useRef, useState, type KeyboardEvent, type TransitionEvent } from "react";
 import banestesLogo from "../../assets/banestes-logo.png";
 import profilePhoto from "../../assets/perfil-henrique.webp";
 import "../../styles/theme.css";
@@ -122,11 +122,35 @@ const technologies = [
 
 function Home() {
   const [activeAbout, setActiveAbout] = useState<AboutSectionId>("profile");
+  const [displayedAbout, setDisplayedAbout] = useState<AboutSectionId>("profile");
+  const [detailsPhase, setDetailsPhase] = useState<"idle" | "closing" | "opening">("idle");
+  const requestedAbout = useRef<AboutSectionId>("profile");
   const [hoveredStack, setHoveredStack] = useState<number | null>(null);
   const [focusedStack, setFocusedStack] = useState<number | null>(null);
   const activeStack = hoveredStack ?? focusedStack;
   const currentAbout =
-    aboutSections.find((section) => section.id === activeAbout) ?? aboutSections[0];
+    aboutSections.find((section) => section.id === displayedAbout) ?? aboutSections[0];
+
+  const selectAbout = (sectionId: AboutSectionId) => {
+    if (sectionId === requestedAbout.current) return;
+
+    requestedAbout.current = sectionId;
+    setActiveAbout(sectionId);
+    if (detailsPhase === "idle") setDetailsPhase("closing");
+  };
+
+  const handleAboutTransitionEnd = (event: TransitionEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget || event.propertyName !== "clip-path") return;
+
+    if (detailsPhase === "closing") {
+      const panel = event.currentTarget.closest<HTMLElement>(".about-content");
+      if (panel) panel.scrollTop = 0;
+      setDisplayedAbout(requestedAbout.current);
+      setDetailsPhase("opening");
+    } else if (detailsPhase === "opening") {
+      setDetailsPhase(requestedAbout.current === displayedAbout ? "idle" : "closing");
+    }
+  };
 
   const scrollToSection = (sectionId: string) => {
     const section = document.getElementById(sectionId);
@@ -163,7 +187,7 @@ function Home() {
 
     event.preventDefault();
     const nextSection = aboutSections[nextIndex];
-    setActiveAbout(nextSection.id);
+    selectAbout(nextSection.id);
     document.getElementById(`about-tab-${nextSection.id}`)?.focus();
   };
 
@@ -297,7 +321,7 @@ function Home() {
                   aria-selected={activeAbout === section.id}
                   aria-controls="about-panel"
                   tabIndex={activeAbout === section.id ? 0 : -1}
-                  onClick={() => setActiveAbout(section.id)}
+                  onClick={() => selectAbout(section.id)}
                   onKeyDown={(event) => handleAboutTabKeyDown(event, index)}
                 >
                   <span aria-hidden="true">0{index + 1}</span>
@@ -310,38 +334,43 @@ function Home() {
           <div
             className={`about-content${currentAbout.id === "work" ? " about-content--work" : ""}`}
             id="about-panel"
-            key={currentAbout.id}
             role="tabpanel"
             aria-labelledby={`about-tab-${currentAbout.id}`}
             tabIndex={0}
           >
-            {currentAbout.showBanestesLogo && (
-              <div className="about-company">
-                <img
-                  src={banestesLogo}
-                  alt="Banestes - Banco do Estado do Espírito Santo"
-                  width="805"
-                  height="823"
-                  loading="lazy"
-                />
-                <span>Experiência atual</span>
-              </div>
-            )}
+            <div className="about-reveal" data-phase={detailsPhase}>
+              <div className="about-reveal-content" onTransitionEnd={handleAboutTransitionEnd}>
+                {currentAbout.showBanestesLogo && (
+                  <div className="about-company">
+                    <img
+                      src={banestesLogo}
+                      alt="Banestes - Banco do Estado do Espírito Santo"
+                      width="805"
+                      height="823"
+                      loading="lazy"
+                    />
+                    <span>Experiência atual</span>
+                  </div>
+                )}
 
-            <div className="about-text">
-              {currentAbout.paragraphs.map((paragraph) => (
-                <p key={paragraph}>{paragraph}</p>
-              ))}
-            </div>
-
-            <dl className="about-details">
-              {currentAbout.details.map((detail) => (
-                <div key={detail.term}>
-                  <dt>{detail.term}</dt>
-                  <dd>{detail.description}</dd>
+                <div className="about-text">
+                  {currentAbout.paragraphs.map((paragraph) => (
+                    <p key={paragraph}>{paragraph}</p>
+                  ))}
                 </div>
-              ))}
-            </dl>
+
+                <div className="about-details-frame">
+                  <dl className="about-details">
+                    {currentAbout.details.map((detail) => (
+                      <div key={detail.term}>
+                        <dt>{detail.term}</dt>
+                        <dd>{detail.description}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
 
