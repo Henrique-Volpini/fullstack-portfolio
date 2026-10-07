@@ -264,22 +264,6 @@ function Home() {
               <span aria-hidden="true">·</span> Python
             </p>
 
-            <div className="hero-actions">
-              <button
-                className="btn btn-primary"
-                type="button"
-                onClick={() => scrollToSection("about")}
-              >
-                Sobre mim
-              </button>
-              <button
-                className="btn btn-secondary"
-                type="button"
-                onClick={() => scrollToSection("stack")}
-              >
-                Ver minha stack
-              </button>
-            </div>
           </div>
 
           <div className="hero-photo-wrapper">
