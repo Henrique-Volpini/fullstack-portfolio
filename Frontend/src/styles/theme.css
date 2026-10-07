@@ -6,16 +6,16 @@
   --color-background-transparent: rgba(7, 17, 31, 0);
 
   --color-text-primary: #f1f7fb;
-  --color-text-secondary: #a8bbc9;
-  --color-text-muted: #71899b;
+  --color-text-secondary: #bfceda;
+  --color-text-muted: #9bafbf;
   --color-text-on-accent: #04111d;
 
   --color-accent: #63c5ed;
   --color-accent-strong: #91daf7;
   --color-accent-muted: rgba(99, 197, 237, 0.14);
 
-  --color-blueprint-grid-minor: rgba(115, 188, 221, 0.045);
-  --color-blueprint-grid-major: rgba(115, 188, 221, 0.085);
+  --color-blueprint-grid-minor: rgba(115, 188, 221, 0.035);
+  --color-blueprint-grid-major: rgba(115, 188, 221, 0.065);
   --color-blueprint-line: rgba(125, 204, 239, 0.52);
   --color-blueprint-line-muted: rgba(125, 204, 239, 0.2);
 
