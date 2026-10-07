@@ -452,7 +452,7 @@ function Home() {
               </li>
               <li>
                 <a
-                  href="https://wa.me/5527997899684"
+                  href="https://wa.me/5527997899584"
                   target="_blank"
                   rel="noopener noreferrer"
                   aria-label="Conversar com Henrique pelo WhatsApp no número mais 55 27 99789 9684 (abre em nova aba)"
