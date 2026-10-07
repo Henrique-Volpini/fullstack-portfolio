@@ -1,0 +1,30 @@
+:root {
+  --color-background: #07111f;
+  --color-background-secondary: #0a1726;
+  --color-background-elevated: #0d1d2d;
+  --color-background-subtle: rgba(17, 38, 58, 0.72);
+  --color-background-transparent: rgba(7, 17, 31, 0);
+
+  --color-text-primary: #f1f7fb;
+  --color-text-secondary: #a8bbc9;
+  --color-text-muted: #71899b;
+  --color-text-on-accent: #04111d;
+
+  --color-accent: #63c5ed;
+  --color-accent-strong: #91daf7;
+  --color-accent-muted: rgba(99, 197, 237, 0.14);
+
+  --color-blueprint-grid-minor: rgba(115, 188, 221, 0.045);
+  --color-blueprint-grid-major: rgba(115, 188, 221, 0.085);
+  --color-blueprint-line: rgba(125, 204, 239, 0.52);
+  --color-blueprint-line-muted: rgba(125, 204, 239, 0.2);
+
+  --color-border: rgba(160, 207, 228, 0.2);
+  --color-border-strong: rgba(160, 207, 228, 0.42);
+  --color-button-primary: #63c5ed;
+  --color-button-primary-hover: #91daf7;
+  --color-button-secondary: rgba(13, 29, 45, 0.45);
+  --color-button-secondary-hover: rgba(99, 197, 237, 0.1);
+  --color-focus: #b9e8fb;
+  --color-transparent: transparent;
+}
