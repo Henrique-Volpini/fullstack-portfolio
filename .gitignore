@@ -12,6 +12,7 @@ db.sqlite3
 
 # Personal security notes
 /AGENTS.md
+/Pessoal.md
 
 # Node / React / Vite
 node_modules/

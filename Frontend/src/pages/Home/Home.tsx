@@ -1,6 +1,7 @@
 import { useRef, useState, type KeyboardEvent, type TransitionEvent } from "react";
 import banestesLogo from "../../assets/banestes-logo.png";
 import profilePhoto from "../../assets/perfil-henrique.webp";
+import AuthPanel from "../Auth/AuthPanel";
 import "../../styles/theme.css";
 import "../../styles/global.css";
 import "./Home.css";
@@ -492,6 +493,7 @@ function Home() {
           </div>
         </section>
       </main>
+      <AuthPanel />
     </>
   );
 }

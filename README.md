@@ -4,3 +4,4 @@
 
 - Cadastro e login não tem limites de tentativas configuradas
 - Gestão de Tokens pendente, ainda não expiram nem nada
+- Ajustar o Anonratethrttle pra impedir bruteforce
