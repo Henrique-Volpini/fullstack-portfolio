@@ -10,6 +10,9 @@ db.sqlite3
 !.env.example
 *.local
 
+# Personal security notes
+/AGENTS.md
+
 # Node / React / Vite
 node_modules/
 dist/
