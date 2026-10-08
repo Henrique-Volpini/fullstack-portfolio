@@ -401,8 +401,7 @@
   animation: auth-submit-sweep 1600ms ease-in-out infinite;
 }
 
-.auth-panel-spinner,
-.auth-panel-check {
+.auth-panel-spinner {
   display: block;
   width: 1.15rem;
   height: 1.15rem;
@@ -412,12 +411,6 @@
 
 .auth-panel-spinner {
   animation: auth-spin 850ms linear infinite;
-}
-
-.auth-panel-check {
-  color: #afd7c0;
-  stroke-dasharray: 24;
-  animation: auth-check-in 420ms ease both;
 }
 
 .auth-panel-feedback {
@@ -441,10 +434,6 @@
   padding-left: 0.5rem;
   border-left: 2px solid #f0b5ab;
   color: #f0b5ab;
-}
-
-.auth-panel-notice[data-type="success"] {
-  color: #afd7c0;
 }
 
 .auth-panel-wait {
@@ -473,11 +462,6 @@
 
 @keyframes auth-spin {
   to { transform: rotate(360deg); }
-}
-
-@keyframes auth-check-in {
-  from { opacity: 0; stroke-dashoffset: 24; }
-  to { opacity: 1; stroke-dashoffset: 0; }
 }
 
 @keyframes auth-wait-pulse {
