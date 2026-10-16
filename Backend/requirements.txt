@@ -1,4 +1,7 @@
 asgiref==3.12.1
+channels[daphne]==4.3.2
+channels-redis==4.3.0
+daphne==4.2.3
 Django==6.1.2
 django-axes[ipware]==8.3.1
 django-cors-headers==4.9.0

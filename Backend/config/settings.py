@@ -46,6 +46,7 @@ ALLOWED_HOSTS = [
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -58,6 +59,9 @@ INSTALLED_APPS = [
     'axes',
     'api',
 ]
+
+CHAT_WEBSOCKET_AUTH_TIMEOUT = 10
+CHAT_WEBSOCKET_MAX_BYTES = 32768
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -98,6 +102,9 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "login": "20/min",
         "cadastro": "5/hour",
+        "chat": "120/min",
+        "chat_mensagem": "60/min",
+        "chat_websocket": "20/min",
     },
     "NUM_PROXIES": 0,
 }
@@ -127,6 +134,36 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'config.wsgi.application'
+ASGI_APPLICATION = 'config.asgi.application'
+
+REDIS_URL = os.environ.get("REDIS_URL", "").strip()
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [{
+                "address": REDIS_URL or "redis://127.0.0.1:6379/0",
+                "socket_connect_timeout": 2,
+                "socket_timeout": 2,
+            }],
+            "prefix": "portfolio-chat",
+        },
+    },
+}
+if DEBUG and not REDIS_URL:
+    CHANNEL_LAYERS = {
+        "default": {"BACKEND": "channels.layers.InMemoryChannelLayer"},
+    }
+
+CHAT_WEBSOCKET_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get(
+        "CHAT_WEBSOCKET_ALLOWED_ORIGINS", ",".join(CORS_ALLOWED_ORIGINS)
+    ).split(",")
+    if origin.strip()
+]
+if DEBUG:
+    CHAT_WEBSOCKET_ALLOWED_ORIGINS += ["localhost", "127.0.0.1"]
 
 
 # Database
