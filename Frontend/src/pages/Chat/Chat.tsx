@@ -10,7 +10,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import type { Conversa, Destinatario, Perfil } from "./chatApi";
-import { ChatStore, totalUnread, type Filtro, type Thread, type UiMessage } from "./chatStore";
+import { ChatStore, inboxItems, totalUnread, type Filtro, type Thread, type UiMessage } from "./chatStore";
 import "./Chat.css";
 
 type ChatProps = {
@@ -543,13 +543,7 @@ function ConversationList({
   onRetry: () => void;
   onSelect: (id: string) => void;
 }) {
-  const items = useMemo(
-    () =>
-      Object.values(conversations)
-        .filter((item) => item.ultima_mensagem && (filter === "todas" || item.destinatario === filter))
-        .sort((a, b) => Date.parse(b.atualizada_em) - Date.parse(a.atualizada_em)),
-    [conversations, filter],
-  );
+  const items = useMemo(() => inboxItems(conversations, filter), [conversations, filter]);
 
   if (error && items.length === 0) {
     return (
@@ -563,7 +557,7 @@ function ConversationList({
   }
 
   if (items.length === 0) {
-    return loading ? (
+    return loading || hasMore ? (
       <Skeleton />
     ) : (
       <div className="chat-empty">
@@ -662,6 +656,20 @@ function Chat({
   useEffect(() => {
     if (ready && operator && visible) void store.loadList(filter);
   }, [store, ready, operator, visible, filter]);
+
+  const listLoading = !!state.listLoading[filter];
+  const listError = state.listError[filter] ?? null;
+  const hasMoreConversations = !!state.listNext[filter];
+  const emptyInbox = useMemo(
+    () => operator && inboxItems(conversations, filter).length === 0,
+    [operator, conversations, filter],
+  );
+
+  useEffect(() => {
+    if (ready && visible && !selectedId && emptyInbox && hasMoreConversations && !listLoading && !listError) {
+      void store.loadList(filter, true);
+    }
+  }, [store, ready, visible, selectedId, emptyInbox, hasMoreConversations, listLoading, listError, filter]);
 
   const handleLogout = async () => {
     setLoggingOut(true);
@@ -800,9 +808,9 @@ function Chat({
             <ConversationList
               conversations={conversations}
               filter={filter}
-              loading={state.listLoading}
-              error={state.listError}
-              hasMore={!!state.listNext[filter]}
+              loading={listLoading}
+              error={listError}
+              hasMore={hasMoreConversations}
               onMore={() => void store.loadList(filter, true)}
               onRetry={() => void store.loadList(filter)}
               onSelect={setSelectedId}

@@ -25,6 +25,7 @@ export type Thread = {
   error: string | null;
   olderNext: string | null;
   loadingOlder: boolean;
+  syncedId: number;
 };
 
 export type ChatState = {
@@ -35,8 +36,8 @@ export type ChatState = {
   conversations: Record<string, Conversa>;
   threads: Record<string, Thread>;
   listNext: Partial<Record<Filtro, string | null>>;
-  listLoading: boolean;
-  listError: string | null;
+  listLoading: Partial<Record<Filtro, boolean>>;
+  listError: Partial<Record<Filtro, string>>;
   inboxErrors: Partial<Record<Destinatario, string>>;
 };
 
@@ -48,14 +49,17 @@ const initialState: ChatState = {
   conversations: {},
   threads: {},
   listNext: {},
-  listLoading: false,
-  listError: null,
+  listLoading: {},
+  listError: {},
   inboxErrors: {},
 };
 
 const PAGE_SIZE = 30;
 const POLL_MS = 5000;
 const PING_MS = 30000;
+const RECONCILE_MS = 60000;
+const MAX_CATCH_UP_PAGES = 30;
+const MAX_READ_ATTEMPTS = 3;
 
 export function mergeMessages(current: UiMessage[], incoming: Mensagem[]): UiMessage[] {
   const confirmed = new Map<number, UiMessage>();
@@ -76,6 +80,12 @@ export function mergeMessages(current: UiMessage[], incoming: Mensagem[]): UiMes
 
 export function lastConfirmedId(messages: UiMessage[]): number {
   return messages.reduce((highest, message) => (message.status ? highest : Math.max(highest, message.id)), 0);
+}
+
+export function inboxItems(conversations: Record<string, Conversa>, filter: Filtro): Conversa[] {
+  return Object.values(conversations)
+    .filter((item) => item.ultima_mensagem && (filter === "todas" || item.destinatario === filter))
+    .sort((a, b) => Date.parse(b.atualizada_em) - Date.parse(a.atualizada_em));
 }
 
 export function totalUnread(state: ChatState): number {
@@ -100,6 +110,10 @@ function isMensagem(value: unknown): value is Mensagem {
   );
 }
 
+// Leituras otimistas em voo de uma conversa: `unread` guarda as não lidas de antes da primeira
+// delas e `failedTop` o maior id cuja requisição falhou.
+type PendingRead = { requests: number; unread: number; failedTop: number };
+
 function newerDate(a: string, b: string): string {
   return Date.parse(a) >= Date.parse(b) ? a : b;
 }
@@ -115,7 +129,13 @@ export class ChatStore {
   private pollTimer = 0;
   private pingTimer = 0;
   private authTimer = 0;
+  private reconcileTimer = 0;
   private readTimers = new Map<string, number>();
+  private readAttempts = new Map<string, number>();
+  private confirmedReads = new Map<string, number>();
+  private pendingReads = new Map<string, PendingRead>();
+  private listInFlight = new Set<string>();
+  private fullSyncQueued = false;
   private opening = new Map<Destinatario, Promise<string | null>>();
   private viewing: string | null = null;
   private filter: Filtro = "todas";
@@ -158,10 +178,16 @@ export class ChatStore {
     window.clearTimeout(this.reconnectTimer);
     window.clearInterval(this.pollTimer);
     this.pollTimer = 0;
+    window.clearInterval(this.reconcileTimer);
     this.readTimers.forEach((timer) => window.clearTimeout(timer));
     this.readTimers.clear();
+    this.readAttempts.clear();
+    this.confirmedReads.clear();
+    this.pendingReads.clear();
+    this.listInFlight.clear();
     this.opening.clear();
     this.syncing = false;
+    this.fullSyncQueued = false;
     this.attempts = 0;
     this.viewing = null;
   }
@@ -194,24 +220,43 @@ export class ChatStore {
   async loadList(filter: Filtro, more = false) {
     const signal = this.abort?.signal;
     const cursor = more ? this.state.listNext[filter] : undefined;
-    if (!signal || this.state.listLoading || (more && !cursor)) return;
-
     if (!more) this.filter = filter;
-    this.set({ listLoading: true, listError: null });
+
+    const key = `${filter}:${more}`;
+    if (!signal || (more && !cursor) || this.listInFlight.has(key)) return;
+
+    this.listInFlight.add(key);
+    this.set((state) => ({
+      listLoading: { ...state.listLoading, [filter]: true },
+      listError: { ...state.listError, [filter]: undefined },
+    }));
     try {
       const page = await listConversas(this.token, {
         destinatario: filter === "todas" ? undefined : filter,
         next: cursor,
         signal,
       });
-      this.set((state) => ({
-        conversations: this.mergeConversations(state.conversations, page.results),
-        listNext: { ...state.listNext, [filter]: page.next },
-        listLoading: false,
-      }));
+      this.set((state) => {
+        const last = page.results[page.results.length - 1];
+        // "Carregar mais" avança o cursor, a menos que uma atualização o tenha reaberto no meio do caminho.
+        // Uma atualização da primeira página só mexe nele quando termina em conversa desconhecida: há
+        // páginas novas além dela, que o cursor atual (ou o fim da lista) deixaria inacessíveis.
+        const moveCursor = more
+          ? state.listNext[filter] === cursor
+          : state.listNext[filter] === undefined || (!!page.next && !!last && !state.conversations[last.id]);
+        return {
+          conversations: this.mergeConversations(state.conversations, page.results),
+          listNext: moveCursor ? { ...state.listNext, [filter]: page.next } : state.listNext,
+        };
+      });
     } catch (error) {
-      if (this.handleFailure(error, signal)) return;
-      this.set({ listLoading: false, listError: messageOf(error) });
+      if (!this.handleFailure(error, signal)) {
+        this.set((state) => ({ listError: { ...state.listError, [filter]: messageOf(error) } }));
+      }
+    } finally {
+      this.listInFlight.delete(key);
+      const busy = this.listInFlight.has(`${filter}:true`) || this.listInFlight.has(`${filter}:false`);
+      this.set((state) => ({ listLoading: { ...state.listLoading, [filter]: busy } }));
     }
   }
 
@@ -237,12 +282,14 @@ export class ChatStore {
     this.updateThread(conversationId, (thread) => ({ ...thread, phase: "loading", error: null }));
     try {
       const page = await getMensagens(this.token, conversationId, { tamanho: PAGE_SIZE, signal });
+      const highest = page.results.reduce((top, message) => Math.max(top, message.id), 0);
       this.updateThread(conversationId, (thread) => ({
         ...thread,
         messages: mergeMessages(thread.messages, page.results),
         phase: "ready",
         error: null,
         olderNext: page.next,
+        syncedId: Math.max(thread.syncedId, highest),
       }));
       if (this.viewing === conversationId) this.queueRead(conversationId);
     } catch (error) {
@@ -331,6 +378,7 @@ export class ChatStore {
         error: null,
         olderNext: null,
         loadingOlder: false,
+        syncedId: 0,
       };
       return { threads: { ...state.threads, [conversationId]: update(current) } };
     });
@@ -351,6 +399,8 @@ export class ChatStore {
   ): Record<string, Conversa> {
     const next = { ...current };
     for (const fresh of incoming) {
+      this.noteConfirmedRead(fresh.id, "usuario", fresh.ultima_lida_usuario);
+      this.noteConfirmedRead(fresh.id, "henrique", fresh.ultima_lida_henrique);
       const old = next[fresh.id];
       next[fresh.id] = old
         ? {
@@ -463,14 +513,14 @@ export class ChatStore {
     }
   }
 
-  private queueRead(conversationId: string) {
+  private queueRead(conversationId: string, delay = 350) {
     window.clearTimeout(this.readTimers.get(conversationId));
     this.readTimers.set(
       conversationId,
       window.setTimeout(() => {
         this.readTimers.delete(conversationId);
         void this.flushRead(conversationId);
-      }, 350),
+      }, delay),
     );
   }
 
@@ -478,23 +528,81 @@ export class ChatStore {
     const signal = this.abort?.signal;
     const { conversations, threads, profile } = this.state;
     const conversation = conversations[conversationId];
-    if (!signal || !profile || !conversation || this.viewing !== conversationId || !this.isVisible()) return;
+    const thread = threads[conversationId];
+    if (
+      !signal ||
+      !profile ||
+      !conversation ||
+      thread?.phase !== "ready" ||
+      this.viewing !== conversationId ||
+      !this.isVisible()
+    ) {
+      return;
+    }
 
-    const lastId = Math.max(
-      conversation.ultima_mensagem?.id ?? 0,
-      lastConfirmedId(threads[conversationId]?.messages ?? []),
-    );
+    const lastId = lastConfirmedId(thread.messages);
     const side = profile.operador ? "henrique" : "usuario";
     const marker = side === "usuario" ? conversation.ultima_lida_usuario : conversation.ultima_lida_henrique;
     if (lastId === 0 || (lastId <= marker && conversation.nao_lidas === 0)) return;
 
+    const pending = this.pendingReads.get(conversationId);
+    if (pending) pending.requests += 1;
+    else this.pendingReads.set(conversationId, { requests: 1, unread: conversation.nao_lidas, failedTop: 0 });
+
     this.applyRead(conversationId, side, lastId, true);
     try {
       const result = await marcarLida(this.token, conversationId, lastId, signal);
+      this.readAttempts.delete(conversationId);
+      this.noteConfirmedRead(conversationId, result.por, result.mensagem_id);
       this.applyRead(conversationId, result.por, result.mensagem_id, false);
+      this.settleRead(conversationId, side, lastId, true);
     } catch (error) {
-      this.handleFailure(error, signal);
+      if (this.handleFailure(error, signal)) return;
+
+      this.settleRead(conversationId, side, lastId, false);
+      const attempts = (this.readAttempts.get(conversationId) ?? 0) + 1;
+      this.readAttempts.set(conversationId, attempts);
+      if (attempts < MAX_READ_ATTEMPTS) this.queueRead(conversationId, 4000 * attempts);
     }
+  }
+
+  private noteConfirmedRead(conversationId: string, by: "usuario" | "henrique", messageId: number) {
+    const key = `${conversationId}:${by}`;
+    this.confirmedReads.set(key, Math.max(this.confirmedReads.get(key) ?? 0, messageId));
+  }
+
+  private settleRead(conversationId: string, by: "usuario" | "henrique", requestedId: number, succeeded: boolean) {
+    const pending = this.pendingReads.get(conversationId);
+    if (!pending) return;
+
+    pending.requests -= 1;
+    if (succeeded) pending.unread = 0;
+    else pending.failedTop = Math.max(pending.failedTop, requestedId);
+    // O desfazer espera a última requisição em voo, para que cada falha não desfaça só uma parte.
+    if (pending.requests > 0) return;
+
+    this.pendingReads.delete(conversationId);
+    const confirmed = this.confirmedReads.get(`${conversationId}:${by}`) ?? 0;
+    // Uma leitura confirmada que cobre as falhas não deixa nada a desfazer.
+    if (confirmed >= pending.failedTop) return;
+
+    this.set((state) => {
+      const conversation = state.conversations[conversationId];
+      if (!conversation) return {};
+
+      const field = by === "usuario" ? "ultima_lida_usuario" : "ultima_lida_henrique";
+      return {
+        conversations: {
+          ...state.conversations,
+          [conversationId]: {
+            ...conversation,
+            [field]: confirmed,
+            // Uma atualização da lista pode já ter trazido a contagem do servidor; somar contaria em dobro.
+            nao_lidas: Math.max(conversation.nao_lidas, pending.unread),
+          },
+        },
+      };
+    });
   }
 
   private applyRead(conversationId: string, by: "usuario" | "henrique", messageId: number, clearUnread: boolean) {
@@ -540,7 +648,11 @@ export class ChatStore {
 
   private async sync(everyThread: boolean) {
     const signal = this.abort?.signal;
-    if (!signal || this.syncing || !this.state.profile || !this.isVisible()) return;
+    if (!signal || !this.state.profile || !this.isVisible()) return;
+    if (this.syncing) {
+      if (everyThread) this.fullSyncQueued = true;
+      return;
+    }
 
     this.syncing = true;
     try {
@@ -556,28 +668,68 @@ export class ChatStore {
         : this.viewing && this.state.threads[this.viewing]
           ? [this.viewing]
           : [];
-      for (const id of ids) {
-        const thread = this.state.threads[id];
-        if (thread?.phase !== "ready") continue;
-
-        let cursor: string | null = null;
-        for (let round = 0; round < 5; round += 1) {
-          const fresh: Awaited<ReturnType<typeof getMensagens>> = await getMensagens(this.token, id, {
-            aposId: lastConfirmedId(this.state.threads[id]?.messages ?? []),
-            tamanho: 100,
-            next: cursor,
-            signal,
-          });
-          fresh.results.forEach((message) => this.receive(message));
-          cursor = fresh.next;
-          if (!cursor) break;
-        }
-      }
+      for (const id of ids) await this.catchUp(id, signal);
     } catch (error) {
       this.handleFailure(error, signal);
     } finally {
       this.syncing = false;
+      if (this.fullSyncQueued && this.started) {
+        this.fullSyncQueued = false;
+        void this.sync(true);
+      }
     }
+  }
+
+  private async catchUp(conversationId: string, signal: AbortSignal) {
+    const thread = this.state.threads[conversationId];
+    if (thread?.phase !== "ready") return;
+
+    const baseline = thread.syncedId;
+    let highest = baseline;
+    let cursor: string | null = null;
+
+    for (let round = 0; round < MAX_CATCH_UP_PAGES; round += 1) {
+      const page: Awaited<ReturnType<typeof getMensagens>> = await getMensagens(this.token, conversationId, {
+        aposId: baseline,
+        tamanho: 100,
+        next: cursor,
+        signal,
+      });
+      page.results.forEach((message) => {
+        highest = Math.max(highest, message.id);
+        this.receive(message);
+      });
+
+      cursor = page.next;
+      if (!cursor) {
+        this.updateThread(conversationId, (current) => ({ ...current, syncedId: Math.max(current.syncedId, highest) }));
+        return;
+      }
+    }
+
+    this.dropThread(conversationId);
+  }
+
+  private dropThread(conversationId: string) {
+    this.set((state) => {
+      const threads = { ...state.threads };
+      // Mensagens ainda não confirmadas (enviando/falhou) só existem localmente e precisam sobreviver à recarga.
+      const unsent = (threads[conversationId]?.messages ?? []).filter((message) => message.status);
+      if (unsent.length === 0) {
+        delete threads[conversationId];
+      } else {
+        threads[conversationId] = {
+          messages: unsent,
+          phase: "error",
+          error: "A conversa precisa ser recarregada.",
+          olderNext: null,
+          loadingOlder: false,
+          syncedId: 0,
+        };
+      }
+      return { threads };
+    });
+    if (this.viewing === conversationId) void this.ensureThread(conversationId);
   }
 
   private handleFailure(error: unknown, signal: AbortSignal): boolean {
@@ -626,6 +778,7 @@ export class ChatStore {
     socket.onclose = (event) => {
       window.clearTimeout(this.authTimer);
       window.clearInterval(this.pingTimer);
+      window.clearInterval(this.reconcileTimer);
       if (this.socket === socket) this.socket = null;
       if (!this.started) return;
 
@@ -652,6 +805,8 @@ export class ChatStore {
         this.pingTimer = window.setInterval(() => {
           if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "ping" }));
         }, PING_MS);
+        window.clearInterval(this.reconcileTimer);
+        this.reconcileTimer = window.setInterval(() => void this.sync(false), RECONCILE_MS);
         void this.sync(true);
         break;
       case "mensagem.criada":
@@ -687,6 +842,7 @@ export class ChatStore {
     const conversation = this.state.conversations[conversationId];
     const mySide = profile.operador ? "henrique" : "usuario";
     const myMarker = mySide === "usuario" ? conversation?.ultima_lida_usuario : conversation?.ultima_lida_henrique;
+    this.noteConfirmedRead(conversationId, by, messageId);
     this.applyRead(conversationId, by, messageId, false);
     if (by === mySide && messageId > (myMarker ?? 0)) void this.refreshConversation(conversationId);
   }
@@ -716,6 +872,7 @@ export class ChatStore {
   private closeSocket() {
     window.clearTimeout(this.authTimer);
     window.clearInterval(this.pingTimer);
+    window.clearInterval(this.reconcileTimer);
     const socket = this.socket;
     this.socket = null;
     if (socket) {

@@ -8,6 +8,24 @@ type SubmitState = "idle" | AuthView;
 type AuthNotice = { type: "error"; message: string };
 
 const SESSION_EXPIRED_MESSAGE = "Sua sessão expirou. Entre novamente para continuar.";
+const TOKEN_STORAGE_KEY = "portfolio.chat.token";
+
+function readStoredToken(): string | null {
+  try {
+    return window.sessionStorage.getItem(TOKEN_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function storeToken(token: string | null) {
+  try {
+    if (token) window.sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
+    else window.sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+  } catch {
+    // Sem armazenamento disponível, a sessão vale apenas até recarregar a página.
+  }
+}
 
 async function sendAuthRequest(
   endpoint: "login" | "usuarios",
@@ -71,8 +89,8 @@ function AuthPanel() {
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
   const [notice, setNotice] = useState<AuthNotice | null>(null);
   const [prefilledUsername, setPrefilledUsername] = useState("");
-  const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [minimized, setMinimized] = useState(false);
+  const [accessToken, setAccessToken] = useState<string | null>(readStoredToken);
+  const [minimized, setMinimized] = useState(() => window.matchMedia("(max-width: 680px)").matches);
   const [expired, setExpired] = useState(false);
   const openButton = useRef<HTMLButtonElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
@@ -188,11 +206,13 @@ function AuthPanel() {
 
   const handleLoggedOut = () => {
     closePanel();
+    storeToken(null);
     setAccessToken(null);
     setMinimized(false);
   };
 
   const handleSessionExpired = () => {
+    storeToken(null);
     setAccessToken(null);
     setMinimized(false);
     setView("login");
@@ -286,6 +306,7 @@ function AuthPanel() {
       }
 
       form.reset();
+      storeToken(login.token);
       setAccessToken(login.token);
       setMinimized(window.matchMedia("(max-width: 680px)").matches);
       setExpired(false);
