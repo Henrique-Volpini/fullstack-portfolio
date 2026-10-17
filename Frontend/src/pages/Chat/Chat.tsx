@@ -152,14 +152,17 @@ function IconBack() {
   );
 }
 
-function LinkStatus({ link }: { link: "connecting" | "live" | "polling" }) {
-  const label = link === "live" ? "AO VIVO" : link === "connecting" ? "CONECTANDO" : "ATUALIZANDO";
+function IconSend() {
   return (
-    <span className="chat-link" data-link={link}>
-      <i aria-hidden="true" />
-      {label}
-    </span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path d="M12 19V5M5.5 11.5 12 5l6.5 6.5" />
+    </svg>
   );
+}
+
+function LinkStatus({ link }: { link: "connecting" | "live" | "polling" }) {
+  const label = link === "live" ? "Ao vivo" : link === "connecting" ? "Conectando" : "Atualizando";
+  return <span className="chat-link" data-link={link} role="img" aria-label={label} title={label} />;
 }
 
 function Tabs<T extends string>({
@@ -273,7 +276,7 @@ function Composer({
         aria-label="Enviar mensagem"
         onMouseDown={(event) => event.preventDefault()}
       >
-        <span aria-hidden="true">→</span>
+        <IconSend />
       </button>
     </form>
   );
@@ -281,17 +284,14 @@ function Composer({
 
 function MessageRow({
   row,
-  operator,
   onRetry,
   onDiscard,
 }: {
   row: Extract<Row, { kind: "message" }>;
-  operator: boolean;
   onRetry: (clientId: string) => void;
   onDiscard: (clientId: string) => void;
 }) {
   const { message, mine, first, seen, index } = row;
-  const author = mine && !operator ? "VOCÊ" : message.remetente.nome;
 
   return (
     <div
@@ -303,7 +303,7 @@ function MessageRow({
     >
       {first && (
         <div className="chat-meta">
-          <span>{author}</span>
+          {!mine && <span>{message.remetente.nome}</span>}
           <time dateTime={message.criada_em}>{timeFormat.format(new Date(message.criada_em))}</time>
         </div>
       )}
@@ -312,24 +312,21 @@ function MessageRow({
       </div>
       {message.status === "enviando" && (
         <span className="chat-state" role="status">
-          ENVIANDO
-          <i aria-hidden="true" />
-          <i aria-hidden="true" />
-          <i aria-hidden="true" />
+          Enviando…
         </span>
       )}
       {message.status === "falhou" && (
         <span className="chat-state chat-state-error" role="alert">
           <span>{message.erro ?? "Não enviada."}</span>
           <button type="button" onClick={() => onRetry(message.id_cliente)}>
-            TENTAR DE NOVO
+            Tentar de novo
           </button>
           <button type="button" onClick={() => onDiscard(message.id_cliente)}>
-            DESCARTAR
+            Descartar
           </button>
         </span>
       )}
-      {seen && !message.status && <span className="chat-state">VISTO</span>}
+      {seen && !message.status && <span className="chat-state">Visto</span>}
     </div>
   );
 }
@@ -430,7 +427,7 @@ function ThreadView({
         <div className="chat-thread-head">
           <button className="chat-back" type="button" onClick={onBack} aria-label="Voltar para a caixa de entrada">
             <IconBack />
-            <span>CAIXA DE ENTRADA</span>
+            <span>Caixa de entrada</span>
           </button>
           <span className="chat-thread-name">{conversation?.usuario.username ?? recipientName}</span>
           {conversation && <span className="chat-tag">{conversation.nome_destinatario}</span>}
@@ -475,13 +472,12 @@ function ThreadView({
 
         {ready && thread.olderNext && (
           <button className="chat-older" type="button" onClick={loadOlder} disabled={thread.loadingOlder}>
-            {thread.loadingOlder ? "CARREGANDO…" : "MENSAGENS ANTERIORES"}
+            {thread.loadingOlder ? "Carregando…" : "Mensagens anteriores"}
           </button>
         )}
 
         {ready && rows.length === 0 && (
           <div className="chat-empty">
-            <span className="chat-empty-mark" aria-hidden="true" />
             <p>Nenhuma mensagem ainda.</p>
             <p className="chat-empty-hint">
               {operator ? "Aguardando a primeira mensagem." : `Diga olá para ${recipientName}.`}
@@ -498,7 +494,6 @@ function ThreadView({
             <MessageRow
               key={row.key}
               row={row}
-              operator={operator}
               onRetry={(clientId) => conversationId && store.retry(conversationId, clientId)}
               onDiscard={(clientId) => conversationId && store.discard(conversationId, clientId)}
             />
@@ -508,7 +503,7 @@ function ThreadView({
 
       {!atBottom && rows.length > 0 && (
         <button className="chat-jump" type="button" onClick={jumpToEnd}>
-          MAIS RECENTES <span aria-hidden="true">↓</span>
+          Mais recentes <span aria-hidden="true">↓</span>
         </button>
       )}
 
@@ -561,7 +556,6 @@ function ConversationList({
       <Skeleton />
     ) : (
       <div className="chat-empty">
-        <span className="chat-empty-mark" aria-hidden="true" />
         <p>Nenhuma conversa por aqui.</p>
         <p className="chat-empty-hint">As mensagens dos visitantes aparecem nesta lista.</p>
       </div>
@@ -599,7 +593,7 @@ function ConversationList({
       {hasMore && (
         <li>
           <button className="chat-older" type="button" onClick={onMore} disabled={loading}>
-            {loading ? "CARREGANDO…" : "VER MAIS CONVERSAS"}
+            {loading ? "Carregando…" : "Ver mais conversas"}
           </button>
         </li>
       )}
@@ -702,9 +696,12 @@ function Chat({
     >
       <header className="chat-top">
         <div className="chat-id">
-          <span className="chat-label">{operator ? "ATENDIMENTO" : "CONVERSA"}</span>
-          {!minimized && <LinkStatus link={state.link} />}
-          {minimized && <span className="chat-peek">{peek}</span>}
+          <LinkStatus link={state.link} />
+          {minimized ? (
+            <span className="chat-peek">{peek}</span>
+          ) : (
+            <span className="chat-label">{operator ? "ATENDIMENTO" : "CONVERSA"}</span>
+          )}
         </div>
 
         <div className="chat-actions">

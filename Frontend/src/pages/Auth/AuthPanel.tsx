@@ -391,13 +391,13 @@ function AuthPanel() {
                 onClick={openPanel}
                 ref={openButton}
               >
-                Criar conta / Login <span aria-hidden="true">→</span>
+                Criar conta / Login
               </button>
             </div>
 
             <div className="auth-panel-dialog" aria-hidden={!isOpen} inert={!isOpen}>
               <div className="auth-panel-topline">
-                <span>ACESSO / CONVERSA</span>
+                <span>ACESSO</span>
                 <button
                   className="auth-panel-close"
                   type="button"
@@ -491,11 +491,11 @@ function AuthPanel() {
                         : submitState === "login" ? "Entrando…"
                           : view === "login" ? "Entrar" : "Criar conta"}
                     </span>
-                    {isSubmitting ? (
+                    {isSubmitting && (
                       <svg className="auth-panel-spinner" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                         <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" strokeDasharray="42 15" strokeLinecap="round" />
                       </svg>
-                    ) : <span className="auth-panel-arrow" aria-hidden="true">→</span>}
+                    )}
                   </button>
                   <div className="auth-panel-feedback">
                     {isSubmitting && <p className="auth-panel-wait" role="status">Aguarde, estamos {submitState === "cadastro" ? "criando sua conta" : "confirmando seu acesso"}…</p>}
