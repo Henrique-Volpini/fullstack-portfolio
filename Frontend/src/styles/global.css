@@ -95,17 +95,3 @@ button {
   outline: 2px solid var(--color-focus);
   outline-offset: 4px;
 }
-
-@media (prefers-reduced-motion: reduce) {
-  html {
-    scroll-behavior: auto;
-  }
-
-  .btn {
-    transition: none;
-  }
-
-  .btn:hover {
-    transform: none;
-  }
-}

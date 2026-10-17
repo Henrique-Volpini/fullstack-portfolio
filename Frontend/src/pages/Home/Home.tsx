@@ -1,4 +1,4 @@
-import { useRef, useState, type KeyboardEvent, type TransitionEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type TransitionEvent } from "react";
 import banestesLogo from "../../assets/banestes-logo.png";
 import profilePhoto from "../../assets/perfil-henrique.webp";
 import AuthPanel from "../Auth/AuthPanel";
@@ -121,6 +121,77 @@ const technologies = [
   },
 ];
 
+function AboutBody({ section }: { section: AboutSection }) {
+  return (
+    <>
+      {section.showBanestesLogo && (
+        <div className="about-company">
+          <img
+            src={banestesLogo}
+            alt="Banestes - Banco do Estado do Espírito Santo"
+            width="805"
+            height="823"
+            loading="lazy"
+          />
+          <span>Experiência atual</span>
+        </div>
+      )}
+
+      <div className="about-text">
+        {section.paragraphs.map((paragraph) => (
+          <p key={paragraph}>{paragraph}</p>
+        ))}
+      </div>
+
+      <div className="about-details-frame">
+        <dl className="about-details">
+          {section.details.map((detail) => (
+            <div key={detail.term}>
+              <dt>{detail.term}</dt>
+              <dd>{detail.description}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    </>
+  );
+}
+
+let scrollFrame = 0;
+
+function scrollToY(targetY: number) {
+  cancelAnimationFrame(scrollFrame);
+
+  const startY = window.scrollY;
+  const distance = targetY - startY;
+
+  if (Math.abs(distance) < 2) {
+    window.scrollTo({ top: targetY, behavior: "instant" });
+    return;
+  }
+
+  const duration = Math.min(1100, Math.max(450, Math.abs(distance) * 0.55));
+  const startTime = performance.now();
+  const interruptions = ["wheel", "touchstart", "keydown"] as const;
+
+  const stop = () => {
+    cancelAnimationFrame(scrollFrame);
+    interruptions.forEach((type) => window.removeEventListener(type, stop));
+  };
+  interruptions.forEach((type) => window.addEventListener(type, stop, { passive: true }));
+
+  const step = (now: number) => {
+    const progress = Math.min(1, (now - startTime) / duration);
+    const eased =
+      progress < 0.5 ? 4 * progress ** 3 : 1 - (-2 * progress + 2) ** 3 / 2;
+    window.scrollTo({ top: startY + distance * eased, behavior: "instant" });
+
+    if (progress < 1) scrollFrame = requestAnimationFrame(step);
+    else stop();
+  };
+  scrollFrame = requestAnimationFrame(step);
+}
+
 function Home() {
   const [activeAbout, setActiveAbout] = useState<AboutSectionId>("profile");
   const [displayedAbout, setDisplayedAbout] = useState<AboutSectionId>("profile");
@@ -131,6 +202,36 @@ function Home() {
   const activeStack = hoveredStack ?? focusedStack;
   const currentAbout =
     aboutSections.find((section) => section.id === displayedAbout) ?? aboutSections[0];
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            (entry.target as HTMLElement).dataset.revealed = "true";
+            observer.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.08, rootMargin: "0px 0px -40px 0px" },
+    );
+
+    document.querySelectorAll<HTMLElement>("[data-reveal]").forEach((el) => {
+      observer.observe(el);
+    });
+
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const header = document.querySelector<HTMLElement>(".home-header");
+    const onScroll = () => {
+      header?.setAttribute("data-scrolled", String(window.scrollY > 24));
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   const selectAbout = (sectionId: AboutSectionId) => {
     if (sectionId === requestedAbout.current) return;
@@ -144,8 +245,6 @@ function Home() {
     if (event.target !== event.currentTarget || event.propertyName !== "clip-path") return;
 
     if (detailsPhase === "closing") {
-      const panel = event.currentTarget.closest<HTMLElement>(".about-content");
-      if (panel) panel.scrollTop = 0;
       setDisplayedAbout(requestedAbout.current);
       setDetailsPhase("opening");
     } else if (detailsPhase === "opening") {
@@ -155,15 +254,17 @@ function Home() {
 
   const scrollToSection = (sectionId: string) => {
     const section = document.getElementById(sectionId);
-
     if (!section) return;
 
-    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const offset = parseFloat(getComputedStyle(section).scrollMarginTop) || 0;
+    const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+    let sectionTop = 0;
+    for (let el: HTMLElement | null = section; el; el = el.offsetParent as HTMLElement | null) {
+      sectionTop += el.offsetTop;
+    }
+    const target = sectionTop - offset;
 
-    section.scrollIntoView({
-      behavior: reduceMotion ? "auto" : "smooth",
-      block: "start",
-    });
+    scrollToY(Math.min(Math.max(0, target), maxScroll));
     section.focus({ preventScroll: true });
   };
 
@@ -285,6 +386,7 @@ function Home() {
           id="about"
           aria-labelledby="about-title"
           tabIndex={-1}
+          data-reveal=""
         >
           <div className="about-heading">
             <span className="about-index" aria-hidden="true">
@@ -317,7 +419,7 @@ function Home() {
           </div>
 
           <div
-            className={`about-content${currentAbout.id === "work" ? " about-content--work" : ""}`}
+            className="about-content"
             id="about-panel"
             role="tabpanel"
             aria-labelledby={`about-tab-${currentAbout.id}`}
@@ -325,36 +427,14 @@ function Home() {
           >
             <div className="about-reveal" data-phase={detailsPhase}>
               <div className="about-reveal-content" onTransitionEnd={handleAboutTransitionEnd}>
-                {currentAbout.showBanestesLogo && (
-                  <div className="about-company">
-                    <img
-                      src={banestesLogo}
-                      alt="Banestes - Banco do Estado do Espírito Santo"
-                      width="805"
-                      height="823"
-                      loading="lazy"
-                    />
-                    <span>Experiência atual</span>
-                  </div>
-                )}
-
-                <div className="about-text">
-                  {currentAbout.paragraphs.map((paragraph) => (
-                    <p key={paragraph}>{paragraph}</p>
-                  ))}
-                </div>
-
-                <div className="about-details-frame">
-                  <dl className="about-details">
-                    {currentAbout.details.map((detail) => (
-                      <div key={detail.term}>
-                        <dt>{detail.term}</dt>
-                        <dd>{detail.description}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                </div>
+                <AboutBody section={currentAbout} />
               </div>
+
+              {aboutSections.map((section) => (
+                <div className="about-sizer" key={section.id} aria-hidden="true" inert>
+                  <AboutBody section={section} />
+                </div>
+              ))}
             </div>
           </div>
         </section>
@@ -364,6 +444,7 @@ function Home() {
           id="stack"
           aria-labelledby="stack-title"
           tabIndex={-1}
+          data-reveal=""
         >
           <div className="section-heading">
             <span aria-hidden="true">02</span>
@@ -406,6 +487,7 @@ function Home() {
           id="contato"
           aria-labelledby="contact-title"
           tabIndex={-1}
+          data-reveal=""
         >
           <div className="section-heading">
             <span aria-hidden="true">03</span>
