@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import Chat from "../Chat/Chat";
+import { apiUrl } from "../Chat/chatApi";
 import "./AuthPanel.css";
 
 type AuthView = "login" | "cadastro";
 type SubmitState = "idle" | AuthView;
 type AuthNotice = { type: "error"; message: string };
 
-const apiUrl = (import.meta.env.VITE_API_URL?.trim() || "/api").replace(/\/+$/, "");
+const SESSION_EXPIRED_MESSAGE = "Sua sessão expirou. Entre novamente para continuar.";
 
 async function sendAuthRequest(
   endpoint: "login" | "usuarios",
@@ -56,6 +57,14 @@ async function sendAuthRequest(
   return result as Record<string, unknown>;
 }
 
+function chatFocusTarget(root: HTMLElement | null): HTMLElement | null {
+  if (!root) return null;
+  const composer = window.matchMedia("(pointer: fine)").matches
+    ? root.querySelector<HTMLElement>(".chat [data-autofocus]:not(:disabled)")
+    : null;
+  return composer ?? root.querySelector<HTMLElement>(".chat-close");
+}
+
 function AuthPanel() {
   const [isOpen, setIsOpen] = useState(false);
   const [view, setView] = useState<AuthView>("login");
@@ -63,10 +72,13 @@ function AuthPanel() {
   const [notice, setNotice] = useState<AuthNotice | null>(null);
   const [prefilledUsername, setPrefilledUsername] = useState("");
   const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [minimized, setMinimized] = useState(false);
+  const [expired, setExpired] = useState(false);
   const openButton = useRef<HTMLButtonElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLElement>(null);
   const previousPosition = useRef<DOMRect | null>(null);
+  const flipDuration = useRef(700);
   const contentWasOpen = useRef(false);
   const request = useRef<AbortController | null>(null);
   const isAuthenticated = accessToken !== null;
@@ -90,13 +102,13 @@ function AuthPanel() {
         { left: `${to.left}px`, top: `${to.top}px`, right: "auto", bottom: "auto", width: `${to.width}px`, height: `${to.height}px`, transform: "none" },
       ],
       {
-        duration: isOpen ? 700 : 580,
+        duration: flipDuration.current,
         easing: "cubic-bezier(0.35, 0, 0.18, 1)",
       },
     );
 
     return () => animation.cancel();
-  }, [isOpen]);
+  }, [isOpen, minimized]);
 
   useLayoutEffect(() => {
     const opening = isOpen && !contentWasOpen.current;
@@ -126,13 +138,14 @@ function AuthPanel() {
     if (!isOpen) return;
 
     const previousOverflow = document.body.style.overflow;
+    const section = panel.current;
     const trigger = openButton.current;
     document.body.style.overflow = "hidden";
     const page = document.querySelectorAll(".home-header, .home");
     page.forEach((element) => element.setAttribute("inert", ""));
     const focusTimer = window.setTimeout(() => {
-      if (document.activeElement === trigger || !panel.current?.contains(document.activeElement)) {
-        closeButton.current?.focus();
+      if (document.activeElement === trigger || !section?.contains(document.activeElement)) {
+        (chatFocusTarget(section) ?? closeButton.current)?.focus();
       }
     }, 700);
 
@@ -140,15 +153,17 @@ function AuthPanel() {
       window.clearTimeout(focusTimer);
       document.body.style.overflow = previousOverflow;
       page.forEach((element) => element.removeAttribute("inert"));
-      trigger?.focus();
+      (trigger ?? section?.querySelector<HTMLElement>('[aria-label="Abrir conversa em tela cheia"]'))?.focus();
     };
   }, [isOpen]);
 
   const openPanel = () => {
+    flipDuration.current = 700;
     previousPosition.current = panel.current?.getBoundingClientRect() ?? null;
     setView("login");
     setSubmitState("idle");
-    setNotice(null);
+    setNotice(expired ? { type: "error", message: SESSION_EXPIRED_MESSAGE } : null);
+    setExpired(false);
     setPrefilledUsername("");
     panel.current?.querySelector<HTMLFormElement>("form")?.reset();
     setIsOpen(true);
@@ -157,11 +172,36 @@ function AuthPanel() {
   const closePanel = () => {
     request.current?.abort();
     request.current = null;
+    flipDuration.current = 580;
     setSubmitState("idle");
     setNotice(null);
     panel.current?.querySelector<HTMLFormElement>("form")?.reset();
     previousPosition.current = panel.current?.getBoundingClientRect() ?? null;
     setIsOpen(false);
+  };
+
+  const toggleMinimized = () => {
+    flipDuration.current = 380;
+    previousPosition.current = panel.current?.getBoundingClientRect() ?? null;
+    setMinimized((value) => !value);
+  };
+
+  const handleLoggedOut = () => {
+    closePanel();
+    setAccessToken(null);
+    setMinimized(false);
+  };
+
+  const handleSessionExpired = () => {
+    setAccessToken(null);
+    setMinimized(false);
+    setView("login");
+    setSubmitState("idle");
+    if (isOpen) {
+      setNotice({ type: "error", message: SESSION_EXPIRED_MESSAGE });
+    } else {
+      setExpired(true);
+    }
   };
 
   const changeView = (nextView: AuthView) => {
@@ -182,10 +222,13 @@ function AuthPanel() {
 
     if (event.key !== "Tab") return;
 
-    const focusable = panel.current?.querySelectorAll<HTMLElement>(
-      '.auth-panel-dialog button:not([disabled]), .auth-panel-dialog input:not([disabled])',
-    );
-    if (!focusable?.length) return;
+    const scope = isAuthenticated ? ".chat" : ".auth-panel-dialog";
+    const focusable = Array.from(
+      panel.current?.querySelectorAll<HTMLElement>(
+        `${scope} button:not([disabled]), ${scope} input:not([disabled]), ${scope} textarea:not([disabled])`,
+      ) ?? [],
+    ).filter((element) => element.offsetParent !== null);
+    if (!focusable.length) return;
 
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
@@ -244,9 +287,11 @@ function AuthPanel() {
 
       form.reset();
       setAccessToken(login.token);
+      setMinimized(window.matchMedia("(max-width: 680px)").matches);
+      setExpired(false);
       setSubmitState("idle");
       setNotice(null);
-      closeButton.current?.focus();
+      window.setTimeout(() => chatFocusTarget(panel.current)?.focus(), 1100);
     } catch (error) {
       if (request.current !== controller) return;
       const message = timedOut
@@ -288,46 +333,63 @@ function AuthPanel() {
         data-open={isOpen}
         data-view={view}
         data-pending={isSubmitting}
-        role={isOpen ? "dialog" : undefined}
+        data-auth={isAuthenticated}
+        data-minimized={isAuthenticated && !isOpen && minimized}
+        role={isOpen ? "dialog" : isAuthenticated ? "complementary" : undefined}
         aria-modal={isOpen ? true : undefined}
         aria-labelledby={isOpen && !isAuthenticated ? "auth-title" : undefined}
-        aria-label={isOpen && isAuthenticated ? "Chat" : undefined}
+        aria-label={isAuthenticated ? (isOpen ? "Chat" : "Conversa") : undefined}
         ref={panel}
         onKeyDown={handleKeyDown}
       >
-        <div className="auth-panel-preview" aria-hidden={isOpen} inert={isOpen}>
-          <span className="auth-panel-label">CONVERSA</span>
-          <div className="auth-panel-preview-content">
-            {!isAuthenticated && <h2>Faça login para conversar com o Henrique.</h2>}
-          </div>
-          <button
-            className="auth-panel-open"
-            type="button"
-            onClick={openPanel}
-            ref={openButton}
-          >
-            {isAuthenticated ? "Abrir chat" : "Criar conta / Login"} <span aria-hidden="true">→</span>
-          </button>
-        </div>
+        {accessToken !== null ? (
+          <Chat
+            token={accessToken}
+            mode={isOpen ? "full" : "mini"}
+            minimized={!isOpen && minimized}
+            onClose={closePanel}
+            onExpand={openPanel}
+            onToggleMinimized={toggleMinimized}
+            onLogout={handleLoggedOut}
+            onSessionExpired={handleSessionExpired}
+          />
+        ) : (
+          <>
+            <div className="auth-panel-preview" aria-hidden={isOpen} inert={isOpen}>
+              <span className="auth-panel-label">CONVERSA</span>
+              <div className="auth-panel-preview-content">
+                <h2>
+                  {expired
+                    ? "Sua sessão expirou. Entre de novo para continuar."
+                    : "Faça login para conversar com o Henrique."}
+                </h2>
+              </div>
+              <button
+                className="auth-panel-open"
+                type="button"
+                onClick={openPanel}
+                ref={openButton}
+              >
+                Criar conta / Login <span aria-hidden="true">→</span>
+              </button>
+            </div>
 
-        <div className="auth-panel-dialog" aria-hidden={!isOpen} inert={!isOpen}>
-          <div className="auth-panel-topline">
-            <span>{isAuthenticated ? "CONVERSA" : "ACESSO / CONVERSA"}</span>
-            <button
-              className="auth-panel-close"
-              type="button"
-              aria-label={isAuthenticated ? "Fechar janela de conversa" : "Fechar janela de login e cadastro"}
-              onClick={closePanel}
-              ref={closeButton}
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
-                <path d="m6 6 12 12M18 6 6 18" />
-              </svg>
-            </button>
-          </div>
+            <div className="auth-panel-dialog" aria-hidden={!isOpen} inert={!isOpen}>
+              <div className="auth-panel-topline">
+                <span>ACESSO / CONVERSA</span>
+                <button
+                  className="auth-panel-close"
+                  type="button"
+                  aria-label="Fechar janela de login e cadastro"
+                  onClick={closePanel}
+                  ref={closeButton}
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+                    <path d="m6 6 12 12M18 6 6 18" />
+                  </svg>
+                </button>
+              </div>
 
-          {isAuthenticated ? <Chat /> : (
-            <>
               <div className="auth-panel-heading" key={view}>
                 <h2 id="auth-title">{view === "login" ? "Entre para conversar." : "Crie sua conta."}</h2>
                 <p className="auth-panel-description">
@@ -424,9 +486,9 @@ function AuthPanel() {
                   </div>
                 </div>
               </form>
-            </>
-          )}
-        </div>
+            </div>
+          </>
+        )}
       </section>
     </>
   );
