@@ -27,5 +27,92 @@
   --color-button-secondary-hover: rgba(122, 175, 200, 0.1);
   --color-live: #4cc38a;
   --color-focus: #b0d8ea;
+  --color-error: #f0b5ab;
   --color-transparent: transparent;
+
+  --color-header-scrolled: rgba(7, 17, 31, 0.88);
+  --color-backdrop: rgba(2, 8, 17, 0.78);
+  --color-shadow: rgba(1, 8, 17, 0.5);
+  --color-input-scheme: dark;
+
+  /* Amostras do botão de tema: valem para qualquer tema ativo. */
+  --swatch-noite: linear-gradient(135deg, #07111f 50%, #7aafc8 50%);
+  --swatch-cianotipo: linear-gradient(135deg, #0a3a8c 50%, #ffd23f 50%);
+  --swatch-prancheta: linear-gradient(135deg, #f4f0e6 50%, #c4340b 50%);
+}
+
+/* Cianótipo: o azul cobalto das plantas copiadas, com linhas brancas e marcação em amarelo. */
+:root[data-theme="cianotipo"] {
+  --color-background: #0a3a8c;
+  --color-background-secondary: #082f73;
+  --color-background-elevated: #0d449f;
+  --color-background-subtle: rgba(255, 255, 255, 0.08);
+  --color-background-transparent: rgba(10, 58, 140, 0);
+
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #d6e5ff;
+  --color-text-muted: #a9c3f0;
+  --color-text-on-accent: #0a2a66;
+
+  --color-accent: #ffd23f;
+  --color-accent-strong: #ffe27a;
+  --color-accent-muted: rgba(255, 255, 255, 0.12);
+
+  --color-blueprint-grid-minor: rgba(255, 255, 255, 0.035);
+  --color-blueprint-grid-major: rgba(255, 255, 255, 0.07);
+  --color-blueprint-line: rgba(255, 255, 255, 0.7);
+  --color-blueprint-line-muted: rgba(255, 255, 255, 0.28);
+
+  --color-border: rgba(255, 255, 255, 0.24);
+  --color-border-strong: rgba(255, 255, 255, 0.5);
+  --color-button-primary: #ffd23f;
+  --color-button-primary-hover: #ffe27a;
+  --color-button-secondary: rgba(8, 47, 115, 0.55);
+  --color-button-secondary-hover: rgba(255, 210, 63, 0.14);
+  --color-live: #5ff2a0;
+  --color-focus: #ffffff;
+  --color-error: #ffb4a8;
+
+  --color-header-scrolled: rgba(10, 58, 140, 0.9);
+  --color-backdrop: rgba(3, 18, 58, 0.8);
+  --color-shadow: rgba(2, 14, 48, 0.55);
+  --color-input-scheme: dark;
+}
+
+/* Prancheta: papel de desenho claro, tinta grafite e laranja de marcação de revisão. */
+:root[data-theme="prancheta"] {
+  --color-background: #f4f0e6;
+  --color-background-secondary: #ebe5d6;
+  --color-background-elevated: #fbf8f0;
+  --color-background-subtle: rgba(255, 255, 255, 0.6);
+  --color-background-transparent: rgba(244, 240, 230, 0);
+
+  --color-text-primary: #16212c;
+  --color-text-secondary: #3b4a58;
+  --color-text-muted: #5b6a78;
+  --color-text-on-accent: #ffffff;
+
+  --color-accent: #c4340b;
+  --color-accent-strong: #9c2807;
+  --color-accent-muted: rgba(22, 60, 110, 0.08);
+
+  --color-blueprint-grid-minor: rgba(22, 60, 110, 0.035);
+  --color-blueprint-grid-major: rgba(22, 60, 110, 0.07);
+  --color-blueprint-line: rgba(22, 60, 110, 0.5);
+  --color-blueprint-line-muted: rgba(22, 60, 110, 0.22);
+
+  --color-border: rgba(22, 33, 44, 0.18);
+  --color-border-strong: rgba(22, 33, 44, 0.4);
+  --color-button-primary: #c4340b;
+  --color-button-primary-hover: #a82c08;
+  --color-button-secondary: rgba(251, 248, 240, 0.6);
+  --color-button-secondary-hover: rgba(196, 52, 11, 0.08);
+  --color-live: #1a9a5b;
+  --color-focus: #1f4fa8;
+  --color-error: #b3261e;
+
+  --color-header-scrolled: rgba(244, 240, 230, 0.9);
+  --color-backdrop: rgba(22, 33, 44, 0.55);
+  --color-shadow: rgba(40, 32, 14, 0.22);
+  --color-input-scheme: light;
 }

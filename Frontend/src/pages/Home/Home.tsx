@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type TransitionEvent }
 import banestesLogo from "../../assets/banestes-logo.png";
 import profilePhoto from "../../assets/perfil-henrique.webp";
 import AuthPanel from "../Auth/AuthPanel";
+import ThemeToggle from "./ThemeToggle";
 import "../../styles/theme.css";
 import "../../styles/global.css";
 import "./Home.css";
@@ -337,6 +338,7 @@ function Home() {
             >
               Contato
             </button>
+            <ThemeToggle />
           </div>
         </nav>
       </header>

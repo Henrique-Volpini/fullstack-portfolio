@@ -1,5 +1,13 @@
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
+  <script>
+    try {
+      var theme = window.localStorage.getItem("portfolio.theme");
+      if (theme === "cianotipo" || theme === "prancheta") {
+        document.documentElement.setAttribute("data-theme", theme);
+      }
+    } catch (error) {}
+  </script>
 </head>
 <body>
   <div id="root"></div>

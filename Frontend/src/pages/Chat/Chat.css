@@ -2,7 +2,7 @@
   --chat-pad: 1.5rem;
   --chat-pad-end: 1.6rem;
   --chat-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  --chat-error: #f0b5ab;
+  --chat-error: var(--color-error);
   container: chat / size;
   position: absolute;
   inset: 0;
@@ -582,7 +582,7 @@
   border: 1px solid var(--color-border-strong);
   border-radius: 2px;
   background: var(--color-background-elevated);
-  box-shadow: 0 6px 16px rgba(1, 8, 17, 0.45);
+  box-shadow: 0 6px 16px var(--color-shadow);
   color: var(--color-text-primary);
   font-size: 0.78rem;
   font-weight: 600;
@@ -636,7 +636,7 @@
   background: var(--color-background-secondary);
   caret-color: var(--color-text-primary);
   color: var(--color-text-primary);
-  color-scheme: dark;
+  color-scheme: var(--color-input-scheme);
   font: inherit;
   font-size: 0.92rem;
   line-height: 1.4;

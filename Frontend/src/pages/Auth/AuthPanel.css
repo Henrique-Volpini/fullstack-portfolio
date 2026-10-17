@@ -2,7 +2,7 @@
   position: fixed;
   z-index: 20;
   inset: 0;
-  background: rgba(2, 8, 17, 0.78);
+  background: var(--color-backdrop);
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
@@ -39,7 +39,7 @@
     24px 24px,
     120px 120px,
     120px 120px;
-  box-shadow: 0 24px 48px rgba(1, 8, 17, 0.5);
+  box-shadow: 0 24px 48px var(--color-shadow);
   overflow: hidden;
 }
 
@@ -307,7 +307,7 @@
 }
 
 .auth-panel-form input {
-  color-scheme: dark;
+  color-scheme: var(--color-input-scheme);
   width: 100%;
   min-height: 2.65rem;
   padding: 0.55rem 0.8rem;
@@ -396,8 +396,8 @@
 
 .auth-panel-notice[data-type="error"] {
   padding-left: 0.5rem;
-  border-left: 2px solid #f0b5ab;
-  color: #f0b5ab;
+  border-left: 2px solid var(--color-error);
+  color: var(--color-error);
 }
 
 .auth-panel-wait {
