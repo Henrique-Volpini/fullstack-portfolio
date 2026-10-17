@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type TransitionEvent }
 import banestesLogo from "../../assets/banestes-logo.png";
 import profilePhoto from "../../assets/perfil-henrique.webp";
 import AuthPanel from "../Auth/AuthPanel";
+import CopyLinkButton from "./CopyLinkButton";
 import ThemeToggle from "./ThemeToggle";
 import "../../styles/theme.css";
 import "../../styles/global.css";
@@ -508,6 +509,7 @@ function Home() {
 
             <ul className="contact-links">
               <li>
+                <CopyLinkButton value="https://github.com/Henrique-Volpini" label="Copiar link do GitHub" />
                 <a
                   href="https://github.com/Henrique-Volpini"
                   target="_blank"
@@ -522,6 +524,10 @@ function Home() {
                 </a>
               </li>
               <li>
+                <CopyLinkButton
+                  value="https://www.linkedin.com/in/henrique-volpini-gon%C3%A7alves-72aa55366/"
+                  label="Copiar link do LinkedIn"
+                />
                 <a
                   href="https://www.linkedin.com/in/henrique-volpini-gon%C3%A7alves-72aa55366/"
                   target="_blank"
@@ -536,6 +542,7 @@ function Home() {
                 </a>
               </li>
               <li>
+                <CopyLinkButton value="https://wa.me/5527997899584" label="Copiar link do WhatsApp" />
                 <a
                   href="https://wa.me/5527997899584"
                   target="_blank"
@@ -550,6 +557,7 @@ function Home() {
                 </a>
               </li>
               <li>
+                <CopyLinkButton value="henriquev.comp@gmail.com" label="Copiar e-mail" />
                 <a
                   href="mailto:henriquev.comp@gmail.com"
                   aria-label="Enviar e-mail para Henrique em henriquev.comp@gmail.com"
@@ -562,6 +570,10 @@ function Home() {
                 </a>
               </li>
               <li>
+                <CopyLinkButton
+                  value={new URL(`${import.meta.env.BASE_URL}curriculo-henrique-volpini.pdf`, window.location.origin).href}
+                  label="Copiar link do currículo"
+                />
                 <a
                   href={`${import.meta.env.BASE_URL}curriculo-henrique-volpini.pdf`}
                   download="curriculo-henrique-volpini.pdf"
