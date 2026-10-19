@@ -6,7 +6,7 @@ Como as migrations são mantidas apenas localmente, prepare um banco novo execut
 
 ## Autenticação e tipos
 
-Cadastro e login são públicos. Os demais endpoints exigem o token retornado pelo login. Cookies de sessão não substituem esse token na API.
+Cadastro e login, inclusive pelo Google, são públicos. Os demais endpoints exigem o token retornado pelo login. Cookies de sessão não substituem esse token na API.
 
 ```http
 Authorization: Token 0123456789abcdef0123456789abcdef01234567
@@ -30,6 +30,7 @@ Um usuário comum acessa somente as próprias conversas. Qualquer superusuário 
 | --- | --- | --- | --- |
 | POST | `/usuarios/` | Não | 201 |
 | POST | `/login/` | Não | 200 |
+| POST | `/login/google/` | Não | 200 |
 | POST | `/logout/` | Sim | 204 |
 | GET | `/chat/` | Sim | 200 |
 | GET | `/chat/conversas/` | Sim | 200 |
@@ -114,6 +115,49 @@ Depois de 5 falhas, o nome de usuário fica bloqueado por 15 minutos, inclusive 
 ```
 
 Dados ausentes/inválidos retornam `400`. O limite geral do endpoint também pode retornar `429`.
+
+### POST `/login/google/`
+
+Autentica uma conta Google e cria seu perfil local no primeiro acesso. Configure `GOOGLE_CLIENT_ID` no `Backend/.env` com o Client ID do aplicativo Web autorizado no Google. Não exige Client Secret nem endpoint de callback no backend: o cliente recebe o ID token do Google e o envia nesta requisição.
+
+Após atualizar o backend, execute `python manage.py makemigrations api` e `python manage.py migrate` para criar o vínculo `ContaGoogle` no banco, seguindo a preparação descrita no início deste documento.
+
+Aceita somente `Content-Type: application/json`.
+
+| Campo | Tipo | Obrigatório | Validação |
+| --- | --- | --- | --- |
+| `credential` | string | Sim | ID token do Google não vazio, com até 8.192 caracteres. |
+
+Requisição:
+
+```json
+{
+  "credential": "ID_TOKEN_RECEBIDO_DO_GOOGLE"
+}
+```
+
+O servidor verifica assinatura, expiração, emissor e audiência do token para o `GOOGLE_CLIENT_ID` configurado. Também exige `sub` não vazio com até 255 caracteres, e-mail válido com até 254 caracteres e `email_verified: true`.
+
+O vínculo é identificado exclusivamente pelo `sub` único da conta Google. Não há associação automática com contas locais por e-mail ou nome de usuário. No primeiro acesso, cria um usuário comum com senha inutilizável e nome de usuário aleatório no formato `google_<uuid>`; os nomes fornecidos pelo Google são limitados a 150 caracteres em cada campo. Nos próximos acessos com o mesmo `sub`, reutiliza a conta e seu token local existente. Contas desativadas não podem entrar.
+
+Resposta `200`, tanto na criação quanto nos acessos seguintes:
+
+```json
+{
+  "token": "0123456789abcdef0123456789abcdef01234567",
+  "usuario": {
+    "id": 8,
+    "username": "google_98149484b5fb4ae08c5e0216525c5933",
+    "email": "ana@example.com"
+  }
+}
+```
+
+Use o `token` retornado pelo Django no cabeçalho `Authorization: Token ...`, inclusive para consultar o perfil em `GET /chat/` e revogar o acesso em `POST /logout/`. O ID token Google não substitui esse token local nem deve ser enviado ao WebSocket.
+
+Erros: `400` para corpo ou `credential` inválido; `401` para credencial Google rejeitada ou conta inativa; `415` para tipo de conteúdo não suportado; `429` para limite de requisições; `503` quando falta `GOOGLE_CLIENT_ID`, a consulta ao Google falha ou excede o timeout de 5 segundos, ou o banco está indisponível. O limite de 20 requisições/minuto por IP é compartilhado com `/login/`; o bloqueio por 5 senhas incorretas descrito no login local não se aplica a esta rota.
+
+No frontend, `VITE_GOOGLE_CLIENT_ID` fica em `Frontend/.env` com o mesmo Client ID público. O botão Google e o envio de `credential` pelo frontend ainda não estão implementados.
 
 ### POST `/logout/`
 
@@ -416,7 +460,7 @@ Resposta `200`:
 
 ### HEAD e OPTIONS
 
-`HEAD` está disponível nas rotas com `GET`, com os mesmos cabeçalhos e sem corpo de resposta. `OPTIONS` está disponível nas oito rotas da API; o cabeçalho `Allow` informa os métodos habilitados.
+`HEAD` está disponível nas rotas com `GET`, com os mesmos cabeçalhos e sem corpo de resposta. `OPTIONS` está disponível nas rotas da API; o cabeçalho `Allow` informa os métodos habilitados.
 
 Uma consulta de metadados `OPTIONS /chat/`, autenticada, retorna `200`:
 
@@ -736,7 +780,7 @@ O token, o papel e o acesso à conversa são revalidados nos comandos e antes de
 | Operação | Limite |
 | --- | --- |
 | Cadastro | 5 tentativas/hora por IP, incluindo entradas rejeitadas. |
-| Login | 20 requisições/minuto por IP; 5 falhas bloqueiam o usuário por 15 minutos. |
+| Login local e Google | 20 requisições/minuto por IP, compartilhadas entre `/login/` e `/login/google/`; somente no login local, 5 falhas de senha bloqueiam o usuário por 15 minutos. |
 | HTTP do chat | 120 requisições/minuto por conta; logout não usa essa cota. |
 | Envio de mensagem | 60/minuto por conta, somando HTTP, WebSocket e ambas as caixas. |
 | Novas conexões WebSocket | 20/minuto por IP informado pelo servidor ASGI. |

@@ -2,15 +2,21 @@ import hashlib
 import logging
 from functools import partial
 from types import SimpleNamespace
+from uuid import uuid4
 
 from asgiref.sync import async_to_sync
 from axes.utils import reset
 from channels.layers import get_channel_layer
+from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
 from django.db import DatabaseError, IntegrityError, transaction
 from django.db.models import Count, F, Prefetch, Q
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
+from google.auth.exceptions import GoogleAuthError, TransportError
+from google.auth.transport.requests import Request as GoogleRequest
+from google.oauth2 import id_token
+from requests import Session
 from rest_framework import serializers, status
 from rest_framework.authtoken.models import Token
 from rest_framework.exceptions import (
@@ -18,15 +24,16 @@ from rest_framework.exceptions import (
 )
 from rest_framework.generics import CreateAPIView
 from rest_framework.pagination import CursorPagination, PageNumberPagination
+from rest_framework.parsers import JSONParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle, SimpleRateThrottle
 from rest_framework.views import APIView
 
-from .models import Conversa, Mensagem
+from .models import ContaGoogle, Conversa, Mensagem
 from .serializers import (
     CadastroUsuarioSerializer, ConversaSerializer, CriarConversaSerializer,
-    EnviarMensagemSerializer, LoginUsuarioSerializer, MarcarLeituraSerializer,
+    EnviarMensagemSerializer, LoginGoogleSerializer, LoginUsuarioSerializer, MarcarLeituraSerializer,
     MensagemSerializer, UsuarioChatSerializer,
 )
 
@@ -85,6 +92,89 @@ class LoginUsuarioView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class LoginGoogleIndisponivel(APIException):
+    status_code = 503
+    default_detail = "O login com Google está temporariamente indisponível. Tente novamente."
+    default_code = "login_google_indisponivel"
+
+
+class LoginGoogleView(APIView):
+    permission_classes = (AllowAny,)
+    authentication_classes = ()
+    parser_classes = (JSONParser,)
+    throttle_classes = (ScopedRateThrottle,)
+    throttle_scope = "login"
+    http_method_names = ("post", "options")
+
+    def get_authenticate_header(self, request):
+        return "Token"
+
+    def post(self, request):
+        validacao = LoginGoogleSerializer(data=request.data)
+        validacao.is_valid(raise_exception=True)
+        if not settings.GOOGLE_CLIENT_ID:
+            raise LoginGoogleIndisponivel()
+
+        try:
+            with Session() as sessao:
+                perfil = id_token.verify_oauth2_token(
+                    validacao.validated_data["credential"],
+                    partial(GoogleRequest(session=sessao), timeout=5),
+                    audience=settings.GOOGLE_CLIENT_ID,
+                )
+        except TransportError:
+            raise LoginGoogleIndisponivel() from None
+        except (ValueError, GoogleAuthError, KeyError, TypeError):
+            raise AuthenticationFailed("Credencial do Google inválida ou expirada.") from None
+
+        sub = perfil.get("sub")
+        email = perfil.get("email")
+        nome = perfil.get("given_name", "")
+        sobrenome = perfil.get("family_name", "")
+        if (
+            not isinstance(sub, str) or not sub.strip() or len(sub) > 255
+            or perfil.get("email_verified") is not True
+            or not isinstance(email, str)
+            or not isinstance(nome, str) or not isinstance(sobrenome, str)
+        ):
+            raise AuthenticationFailed("Credencial do Google inválida ou expirada.")
+        try:
+            email = serializers.EmailField(max_length=254).run_validation(email)
+        except serializers.ValidationError:
+            raise AuthenticationFailed("Credencial do Google inválida ou expirada.") from None
+
+        try:
+            conta = ContaGoogle.objects.select_related("usuario").filter(sub=sub).first()
+            if conta is None:
+                try:
+                    with transaction.atomic():
+                        usuario = get_user_model().objects.create_user(
+                            username=f"google_{uuid4().hex}",
+                            password=None,
+                            email=email,
+                            first_name=nome[:150],
+                            last_name=sobrenome[:150],
+                        )
+                        conta = ContaGoogle.objects.create(usuario=usuario, sub=sub)
+                except IntegrityError:
+                    # Outro acesso pode ter criado o mesmo vínculo durante a transação.
+                    conta = ContaGoogle.objects.select_related("usuario").filter(sub=sub).first()
+                    if conta is None:
+                        raise
+
+            usuario = conta.usuario
+            if not usuario.is_active:
+                raise AuthenticationFailed("Esta conta está desativada.")
+            token_acesso, _ = Token.objects.get_or_create(user=usuario)
+        except DatabaseError:
+            raise LoginGoogleIndisponivel() from None
+
+        return Response({
+            "token": token_acesso.key,
+            "usuario": CadastroUsuarioSerializer(usuario).data,
+        })
 
 
 class ChatIndisponivel(APIException):

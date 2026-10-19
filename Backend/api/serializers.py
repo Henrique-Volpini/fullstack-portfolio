@@ -12,6 +12,15 @@ from .models import Conversa, Mensagem
 ModeloUsuario = get_user_model()
 
 
+class LoginGoogleSerializer(serializers.Serializer):
+    credential = serializers.CharField(max_length=8192, trim_whitespace=False)
+
+    def validate_credential(self, credential):
+        if not isinstance(self.initial_data.get("credential"), str) or not credential.strip():
+            raise serializers.ValidationError("Informe a credencial do Google como texto.")
+        return credential
+
+
 class LoginUsuarioSerializer(serializers.Serializer):
     username = serializers.CharField(required=True, max_length=150)
     password = serializers.CharField(

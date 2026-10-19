@@ -5,6 +5,13 @@ from django.db import models
 from django.utils import timezone
 
 
+class ContaGoogle(models.Model):
+    usuario = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="conta_google"
+    )
+    sub = models.CharField(max_length=255, unique=True)
+
+
 class Conversa(models.Model):
     class Destinatario(models.TextChoices):
         HENRIQUE = "henrique", "Henrique"

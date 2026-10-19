@@ -1,4 +1,5 @@
 import asyncio
+import json
 import uuid
 from base64 import b64encode
 from concurrent.futures import ThreadPoolExecutor
@@ -6,22 +7,29 @@ from contextlib import asynccontextmanager
 from datetime import timedelta
 from threading import Barrier
 from time import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from urllib.parse import urlsplit
 
 from channels.db import database_sync_to_async
 from channels.layers import get_channel_layer
 from channels.testing import WebsocketCommunicator
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.core.management import call_command
-from django.db import IntegrityError, close_old_connections, transaction
+from django.db import (
+    IntegrityError, OperationalError, close_old_connections, connection, transaction,
+)
 from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
+from google.auth import crypt as google_crypt, jwt as google_jwt
+from google.auth.exceptions import GoogleAuthError, TransportError
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient, APITestCase
 
-from .models import Conversa, Mensagem
+from .models import ContaGoogle, Conversa, Mensagem
 from .views import (
     MensagemThrottle, enviar_mensagem, grupo_usuario, publicar_evento,
     registrar_resposta_assistente,
@@ -174,6 +182,378 @@ CONFIG_TESTES = {
     "CACHES": {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}},
     "CHANNEL_LAYERS": {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}},
 }
+
+
+@override_settings(**CONFIG_TESTES, GOOGLE_CLIENT_ID="cliente-google.apps.googleusercontent.com")
+class LoginGoogleTests(APITestCase):
+    def setUp(self):
+        cache.clear()
+        self.claims = {
+            "sub": "123456789012345678901",
+            "email": "visitante@example.com",
+            "email_verified": True,
+            "given_name": "Ana",
+            "family_name": "Silva",
+        }
+        verificador = patch(
+            "api.views.id_token.verify_oauth2_token", return_value=self.claims
+        )
+        self.verificador = verificador.start()
+        self.addCleanup(verificador.stop)
+
+    def login(self, dados=None, **headers):
+        return self.client.post(
+            "/login/google/", {"credential": "id-token-google"} if dados is None else dados,
+            format="json", REMOTE_ADDR="192.0.2.10", **headers,
+        )
+
+    def verificar_sem_contas(self):
+        self.assertEqual(get_user_model().objects.count(), 0)
+        self.assertEqual(ContaGoogle.objects.count(), 0)
+        self.assertEqual(Token.objects.count(), 0)
+
+    def test_login_cria_conta_com_senha_inutilizavel_e_retorna_token_da_api(self):
+        self.claims.update({"is_staff": True, "is_superuser": True})
+        resposta = self.login()
+        self.assertEqual(resposta.status_code, 200)
+        usuario = get_user_model().objects.get()
+        conta = ContaGoogle.objects.get()
+        self.assertEqual(conta.sub, self.claims["sub"])
+        self.assertEqual(conta.usuario_id, usuario.pk)
+        self.assertRegex(usuario.username, r"^google_[0-9a-f]{32}$")
+        self.assertEqual(usuario.email, "visitante@example.com")
+        self.assertEqual((usuario.first_name, usuario.last_name), ("Ana", "Silva"))
+        self.assertFalse(usuario.has_usable_password())
+        self.assertTrue(usuario.is_active)
+        self.assertFalse(usuario.is_staff)
+        self.assertFalse(usuario.is_superuser)
+        self.assertEqual(resposta.json(), {
+            "token": Token.objects.get(user=usuario).key,
+            "usuario": {
+                "id": usuario.pk, "username": usuario.username, "email": usuario.email,
+            },
+        })
+        argumentos, opcoes = self.verificador.call_args
+        self.assertEqual(argumentos[0], "id-token-google")
+        audience = opcoes.get("audience", argumentos[2] if len(argumentos) > 2 else None)
+        self.assertEqual(audience, "cliente-google.apps.googleusercontent.com")
+        self.assertNotIn("sessionid", resposta.cookies)
+
+    def test_nomes_sao_limitados_a_150_caracteres(self):
+        self.claims.update({"given_name": "A" * 151, "family_name": "B" * 151})
+        self.assertEqual(self.login().status_code, 200)
+        usuario = get_user_model().objects.get()
+        self.assertEqual(usuario.first_name, "A" * 150)
+        self.assertEqual(usuario.last_name, "B" * 150)
+
+    def test_nomes_opcionais_nao_impedem_login(self):
+        self.claims.pop("given_name")
+        self.claims.pop("family_name")
+        self.assertEqual(self.login().status_code, 200)
+        usuario = get_user_model().objects.get()
+        self.assertEqual((usuario.first_name, usuario.last_name), ("", ""))
+
+    def test_mesmo_sub_reutiliza_usuario_e_token_mesmo_com_email_alterado(self):
+        primeira = self.login()
+        self.assertEqual(primeira.status_code, 200)
+        self.claims["email"] = "novo-email@example.com"
+        segunda = self.login()
+        self.assertEqual(segunda.status_code, 200)
+        self.assertEqual(segunda.json()["token"], primeira.json()["token"])
+        self.assertEqual(segunda.json()["usuario"]["id"], primeira.json()["usuario"]["id"])
+        self.assertEqual(get_user_model().objects.count(), 1)
+        self.assertEqual(ContaGoogle.objects.count(), 1)
+        self.assertEqual(Token.objects.count(), 1)
+
+    def test_email_de_contas_locais_inclusive_admin_nao_associa_usuarios(self):
+        usuarios = get_user_model()
+        local = usuarios.objects.create_user(username="local", email=self.claims["email"])
+        admin = usuarios.objects.create_superuser(username="admin", email=self.claims["email"])
+        resposta = self.login()
+        self.assertEqual(resposta.status_code, 200)
+        usuario_google = usuarios.objects.get(pk=resposta.json()["usuario"]["id"])
+        self.assertNotIn(usuario_google.pk, (local.pk, admin.pk))
+        self.assertFalse(usuario_google.is_staff)
+        self.assertFalse(usuario_google.is_superuser)
+        self.assertEqual(usuarios.objects.count(), 3)
+        self.assertFalse(Token.objects.filter(user__in=(local, admin)).exists())
+
+    def test_dois_subs_com_mesmo_email_criam_contas_distintas(self):
+        primeira = self.login()
+        self.claims["sub"] = "outro-sub-google"
+        segunda = self.login()
+        self.assertEqual((primeira.status_code, segunda.status_code), (200, 200))
+        self.assertNotEqual(primeira.json()["usuario"]["id"], segunda.json()["usuario"]["id"])
+        self.assertNotEqual(primeira.json()["token"], segunda.json()["token"])
+        self.assertEqual(get_user_model().objects.count(), 2)
+        self.assertEqual(ContaGoogle.objects.count(), 2)
+
+    def test_usuario_vinculado_inativo_nao_recebe_token(self):
+        usuario = get_user_model().objects.create_user(username="inativo", is_active=False)
+        ContaGoogle.objects.create(sub=self.claims["sub"], usuario=usuario)
+        resposta = self.login()
+        self.assertEqual(resposta.status_code, 401)
+        self.assertFalse(Token.objects.exists())
+        self.assertEqual(get_user_model().objects.count(), 1)
+
+    def test_login_publico_ignora_header_de_token_invalido(self):
+        resposta = self.login(HTTP_AUTHORIZATION="Token token-invalido")
+        self.assertEqual(resposta.status_code, 200)
+
+    def test_erros_de_verificacao_nao_criam_conta_nem_expoem_detalhes(self):
+        for erro in (
+            ValueError("assinatura invalida: detalhe interno"),
+            ValueError("token expirado: detalhe interno"),
+            ValueError("audience incorreta: detalhe interno"),
+            ValueError("issuer incorreto: detalhe interno"),
+            GoogleAuthError("detalhe interno"),
+        ):
+            with self.subTest(erro=str(erro)):
+                self.verificador.side_effect = erro
+                resposta = self.login()
+                self.assertEqual(resposta.status_code, 401)
+                self.assertNotIn("detalhe interno", str(resposta.json()))
+                self.verificar_sem_contas()
+
+    def test_falha_de_transporte_retorna_503_sem_criar_conta(self):
+        self.verificador.side_effect = TransportError("detalhe interno")
+        resposta = self.login()
+        self.assertEqual(resposta.status_code, 503)
+        self.assertNotIn("detalhe interno", str(resposta.json()))
+        self.verificar_sem_contas()
+
+    @override_settings(GOOGLE_CLIENT_ID="")
+    def test_client_id_ausente_desabilita_login_sem_validacao_externa(self):
+        resposta = self.login()
+        self.assertEqual(resposta.status_code, 503)
+        self.verificador.assert_not_called()
+        self.verificar_sem_contas()
+
+    def test_claims_invalidas_sao_rejeitadas_sem_criar_contas(self):
+        invalidas = (
+            {"sub": None}, {"sub": ""}, {"sub": []}, {"sub": 123}, {"sub": "s" * 256},
+            {"email": None}, {"email": []}, {"email": 123}, {"email": "invalido"},
+            {"email": f"{'a' * 64}@{'b' * 63}.{'c' * 63}.{'d' * 62}"},
+            {"email_verified": False}, {"email_verified": "true"}, {"email_verified": 1},
+        )
+        for alteracao in invalidas:
+            with self.subTest(alteracao=alteracao):
+                self.verificador.return_value = {**self.claims, **alteracao}
+                self.assertEqual(self.login().status_code, 401)
+                self.verificar_sem_contas()
+        for campo in ("sub", "email", "email_verified"):
+            with self.subTest(campo_ausente=campo):
+                self.verificador.return_value = {
+                    chave: valor for chave, valor in self.claims.items() if chave != campo
+                }
+                self.assertEqual(self.login().status_code, 401)
+                self.verificar_sem_contas()
+
+    def test_limites_validos_de_credential_sub_e_email_sao_aceitos(self):
+        self.claims.update({
+            "sub": "s" * 255,
+            "email": f"{'a' * 64}@{'b' * 63}.{'c' * 63}.{'d' * 61}",
+        })
+        resposta = self.login({"credential": "x" * 8192})
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(ContaGoogle.objects.get().sub, self.claims["sub"])
+        self.assertEqual(get_user_model().objects.get().email, self.claims["email"])
+
+    def test_payloads_invalidos_retornam_400_sem_verificar_no_google(self):
+        for dados in (
+            {}, {"credential": None}, {"credential": ""}, {"credential": " "},
+            {"credential": []}, {"credential": {}}, {"credential": True},
+            {"credential": 123}, {"credential": 1.5}, {"credential": "x" * 8193},
+            [], "id-token-google",
+        ):
+            with self.subTest(dados=str(dados)[:80]):
+                self.assertEqual(self.login(dados).status_code, 400)
+        self.verificador.assert_not_called()
+        self.verificar_sem_contas()
+
+    def test_aceita_apenas_post_json(self):
+        formulario = self.client.post("/login/google/", {"credential": "id-token-google"})
+        self.assertEqual(formulario.status_code, 415)
+        self.assertEqual(self.client.get("/login/google/").status_code, 405)
+        invalido = self.client.post(
+            "/login/google/", '{"credential":', content_type="application/json"
+        )
+        self.assertEqual(invalido.status_code, 400)
+        self.verificador.assert_not_called()
+        self.verificar_sem_contas()
+
+    def test_falha_ao_gravar_vinculo_reverte_criacao_do_usuario(self):
+        with patch.object(ContaGoogle, "save", side_effect=IntegrityError("detalhe interno")):
+            resposta = self.login()
+        self.assertEqual(resposta.status_code, 503)
+        self.assertNotIn("detalhe interno", str(resposta.json()))
+        self.verificar_sem_contas()
+
+    def test_banco_indisponivel_retorna_503_sem_expor_detalhes(self):
+        with patch(
+            "django.db.backends.utils.CursorWrapper.execute",
+            side_effect=OperationalError("detalhe interno"),
+        ):
+            resposta = self.login()
+        self.assertEqual(resposta.status_code, 503)
+        self.assertNotIn("detalhe interno", str(resposta.json()))
+        self.verificar_sem_contas()
+
+    def test_limite_por_ip_e_compartilhado_com_login_por_senha(self):
+        usuario = get_user_model().objects.create_user(username="local", password="Senha93!")
+        for _ in range(19):
+            self.assertEqual(self.login().status_code, 200)
+        resposta_local = self.client.post(
+            "/login/", {"username": usuario.username, "password": "Senha93!"},
+            format="json", REMOTE_ADDR="192.0.2.10",
+        )
+        self.assertEqual(resposta_local.status_code, 200)
+        self.verificador.reset_mock()
+        limitada = self.login()
+        self.assertEqual(limitada.status_code, 429)
+        self.assertGreater(int(limitada["Retry-After"]), 0)
+        self.verificador.assert_not_called()
+        outro_ip = self.client.post(
+            "/login/google/", {"credential": "id-token-google"},
+            format="json", REMOTE_ADDR="192.0.2.11",
+        )
+        self.assertEqual(outro_ip.status_code, 200)
+
+    def test_token_google_autentica_chat_e_logout_revoga_acesso(self):
+        login = self.login()
+        self.assertEqual(login.status_code, 200)
+        token = login.json()["token"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Token {token}")
+        chat = self.client.get("/chat/")
+        self.assertEqual(chat.status_code, 200)
+        self.assertEqual(chat.json()["usuario"]["id"], login.json()["usuario"]["id"])
+        self.assertFalse(chat.json()["operador"])
+        self.assertEqual(self.client.post("/logout/").status_code, 204)
+        self.assertFalse(Token.objects.filter(key=token).exists())
+        self.assertEqual(self.client.get("/chat/").status_code, 401)
+        self.client.credentials()
+        novo_login = self.login()
+        self.assertEqual(novo_login.status_code, 200)
+        self.assertNotEqual(novo_login.json()["token"], token)
+        self.assertEqual(get_user_model().objects.count(), 1)
+
+
+@override_settings(**CONFIG_TESTES, GOOGLE_CLIENT_ID="cliente-google.apps.googleusercontent.com")
+class LoginGoogleTokensAssinadosTests(APITestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        chave = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        cls.assinador = google_crypt.RSASigner(chave, key_id="chave-teste")
+        cls.certificados = {
+            "chave-teste": chave.public_key().public_bytes(
+                serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+            ).decode("ascii"),
+        }
+
+    def setUp(self):
+        cache.clear()
+        agora = int(time())
+        self.claims = {
+            "sub": "sub-token-assinado", "email": "assinado@example.com",
+            "email_verified": True, "iss": "https://accounts.google.com",
+            "aud": "cliente-google.apps.googleusercontent.com",
+            "iat": agora - 60, "exp": agora + 3600,
+        }
+
+    def token(self, alteracoes=None):
+        return google_jwt.encode(
+            self.assinador, {**self.claims, **(alteracoes or {})}
+        ).decode("ascii")
+
+    def login(self, credential):
+        resposta_certificados = SimpleNamespace(
+            status=200, data=json.dumps(self.certificados).encode("utf-8")
+        )
+        with patch("api.views.GoogleRequest") as transporte:
+            transporte.return_value.return_value = resposta_certificados
+            resposta = self.client.post(
+                "/login/google/", {"credential": credential}, format="json"
+            )
+            transporte.return_value.assert_called_once()
+            self.assertEqual(transporte.return_value.call_args.kwargs["timeout"], 5)
+        return resposta
+
+    def test_token_rsa_valido_passa_pelo_verificador_real_sem_acesso_a_rede(self):
+        resposta = self.login(self.token())
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(ContaGoogle.objects.get().sub, self.claims["sub"])
+        self.assertEqual(Token.objects.get().key, resposta.json()["token"])
+
+    def test_assinatura_audience_issuer_e_expiracao_invalidas_sao_rejeitadas(self):
+        cabecalho, corpo, assinatura = self.token().split(".")
+        assinatura_invalida = ("A" if assinatura[0] != "A" else "B") + assinatura[1:]
+        credenciais = {
+            "assinatura": f"{cabecalho}.{corpo}.{assinatura_invalida}",
+            "audience": self.token({"aud": "outro-cliente.apps.googleusercontent.com"}),
+            "issuer": self.token({"iss": "https://outro.example.com"}),
+            "expiracao": self.token({"exp": int(time()) - 1}),
+        }
+        for motivo, credential in credenciais.items():
+            with self.subTest(motivo=motivo):
+                resposta = self.login(credential)
+                self.assertEqual(resposta.status_code, 401)
+                self.assertFalse(get_user_model().objects.exists())
+                self.assertFalse(ContaGoogle.objects.exists())
+                self.assertFalse(Token.objects.exists())
+
+
+@override_settings(**CONFIG_TESTES, GOOGLE_CLIENT_ID="cliente-google.apps.googleusercontent.com")
+class LoginGoogleConcorrenciaTests(TransactionTestCase):
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+
+    def test_mesmo_sub_em_conexoes_distintas_nao_duplica_usuario_nem_vinculo(self):
+        barreira = Barrier(2)
+        claims = {
+            "sub": "sub-google-concorrente", "email": "concorrente@example.com",
+            "email_verified": True,
+        }
+
+        def verificar(*args, **kwargs):
+            barreira.wait(timeout=5)
+            return claims.copy()
+
+        def enviar():
+            close_old_connections()
+            try:
+                connection.ensure_connection()
+                conexao = id(connection.connection)
+                resposta = APIClient().post(
+                    "/login/google/", {"credential": "id-token-google"},
+                    format="json", REMOTE_ADDR="192.0.2.20",
+                )
+                return conexao, resposta.status_code, resposta.json()
+            finally:
+                close_old_connections()
+
+        with patch("api.views.id_token.verify_oauth2_token", side_effect=verificar):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                tarefas = [executor.submit(enviar) for _ in range(2)]
+                respostas = [tarefa.result(timeout=15) for tarefa in tarefas]
+        self.assertEqual(len({conexao for conexao, _, _ in respostas}), 2)
+        self.assertTrue(all(status in (200, 503) for _, status, _ in respostas), respostas)
+        with patch("api.views.id_token.verify_oauth2_token", return_value=claims):
+            repetida = self.client.post(
+                "/login/google/", {"credential": "id-token-google"}, format="json"
+            )
+        self.assertEqual(repetida.status_code, 200)
+        self.assertEqual(get_user_model().objects.count(), 1)
+        self.assertEqual(ContaGoogle.objects.count(), 1)
+        self.assertEqual(Token.objects.count(), 1)
+        conta = ContaGoogle.objects.get()
+        self.assertEqual(conta.sub, claims["sub"])
+        self.assertEqual(conta.usuario_id, repetida.json()["usuario"]["id"])
+        for _, status, dados in respostas:
+            if status == 200:
+                self.assertEqual(dados["token"], repetida.json()["token"])
+                self.assertEqual(dados["usuario"]["id"], conta.usuario_id)
 
 
 class DadosChatMixin:

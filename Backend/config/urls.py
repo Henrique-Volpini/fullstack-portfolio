@@ -19,15 +19,16 @@ from django.urls import path
 
 from api.views import (
     CadastroUsuarioView, ChatInicioView, ConversaDetalheView, ConversasView,
-    LeituraConversaView, LoginUsuarioView,
+    LeituraConversaView, LoginGoogleView, LoginUsuarioView,
     LogoutUsuarioView, MensagensView,
 )
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
     path("usuarios/", CadastroUsuarioView.as_view(), name="cadastro-usuario"),
     path("login/", LoginUsuarioView.as_view(), name="login-usuario"),
+    path("login/google/", LoginGoogleView.as_view(), name="login-google"),
     path("logout/", LogoutUsuarioView.as_view(), name="logout-usuario"),
+    
     path("chat/", ChatInicioView.as_view(), name="chat-inicio"),
     path("chat/conversas/", ConversasView.as_view(), name="chat-conversas"),
     path("chat/conversas/<uuid:conversa_id>/", ConversaDetalheView.as_view(), name="chat-conversa"),
