@@ -24,6 +24,15 @@ load_dotenv(BASE_DIR / ".env", override=False)
 
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
 
+try:
+    AUTH_TOKEN_TTL_SECONDS = int(os.environ.get("DJANGO_TOKEN_TTL_SECONDS", "3600"))
+    if AUTH_TOKEN_TTL_SECONDS <= 0:
+        raise ValueError
+except ValueError:
+    raise ImproperlyConfigured(
+        "DJANGO_TOKEN_TTL_SECONDS deve ser um número inteiro maior que zero."
+    ) from None
+
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
@@ -96,7 +105,7 @@ CORS_ALLOWED_ORIGINS = [
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework.authentication.TokenAuthentication",
+        "api.authentication.TokenExpiravelAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",

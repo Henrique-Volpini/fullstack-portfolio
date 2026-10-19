@@ -11,11 +11,12 @@ from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.conf import settings
 from django.db import DatabaseError
 from django.http import Http404
+from django.utils import timezone
 from rest_framework import serializers
-from rest_framework.authtoken.models import Token
 from rest_framework.exceptions import APIException, AuthenticationFailed, NotFound, Throttled, ValidationError
 from redis.exceptions import RedisError
 
+from .authentication import SessaoIndisponivel, expira_em, validar_token
 from .views import (
     ChatIndisponivel, WebsocketThrottle, assinatura_token, eh_operador,
     conversas_permitidas, enviar_mensagem, grupo_usuario, marcar_leitura,
@@ -25,10 +26,7 @@ from .serializers import MensagemSerializer, UsuarioChatSerializer
 
 @database_sync_to_async
 def autenticar_token(token):
-    acesso = Token.objects.select_related("user").filter(key=token).first()
-    if acesso is None or not acesso.user.is_active:
-        raise AuthenticationFailed("Acesso inválido ou encerrado.")
-    return acesso.user
+    return validar_token(token)
 
 
 @database_sync_to_async
@@ -46,6 +44,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         self.grupo = None
         self.fechando = False
         self.prazo_autenticacao = None
+        self.prazo_expiracao = None
         self.eventos_recebidos = deque()
         if self.scope.get("query_string"):
             await self.close(code=4400)
@@ -75,6 +74,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
     async def disconnect(self, close_code):
         self.fechando = True
         await self._cancelar_prazo()
+        await self._cancelar_expiracao()
         if self.grupo is not None:
             try:
                 await self.channel_layer.group_discard(self.grupo, self.channel_name)
@@ -116,6 +116,8 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             if not await self._validar_acesso():
                 return
             await self.channel_layer.group_add(self.grupo, self.channel_name)
+            if self.fechando:
+                return
             tipo = dados["type"]
             if tipo == "ping":
                 if set(dados) != {"type"}:
@@ -127,12 +129,14 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                 conteudo = {k: v for k, v in dados.items() if k not in {"type", "conversa_id"}}
                 if tipo == "mensagem.enviar":
                     resposta = await self._enviar(conversa_id, conteudo)
-                    await self.send_json(resposta)
+                    if not self.fechando:
+                        await self.send_json(resposta)
                 else:
                     resposta = await database_sync_to_async(marcar_leitura)(
                         self.usuario, conversa_id, conteudo
                     )
-                    await self.send_json({**resposta, "type": "leitura.confirmada"})
+                    if not self.fechando:
+                        await self.send_json({**resposta, "type": "leitura.confirmada"})
             else:
                 raise ValidationError("Tipo de evento não suportado.")
         except AuthenticationFailed as erro:
@@ -140,6 +144,9 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             await self._fechar(4401)
         except Http404:
             await self._erro(NotFound("Conversa não encontrada."), dados)
+        except SessaoIndisponivel as erro:
+            await self._erro(erro, dados)
+            await self._fechar(1013)
         except APIException as erro:
             await self._erro(erro, dados)
             if self.usuario is None:
@@ -156,9 +163,10 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         token = dados["token"]
         if not isinstance(token, str) or len(token) != 40 or any(c not in "0123456789abcdef" for c in token):
             raise AuthenticationFailed("Acesso inválido ou encerrado.")
-        usuario = await autenticar_token(token)
+        acesso = await autenticar_token(token)
         if self.fechando:
             return
+        usuario = acesso.user
         grupo = grupo_usuario(usuario.pk)
         await self.channel_layer.group_add(grupo, self.channel_name)
         if self.fechando:
@@ -169,13 +177,28 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         self.operador = eh_operador(usuario)
         self.grupo = grupo
         await self._cancelar_prazo()
+        vencimento = expira_em(acesso)
+        if vencimento <= timezone.now():
+            raise AuthenticationFailed("Sua sessão expirou. Entre novamente para continuar.")
         await self.send_json({
             "type": "autenticado", "usuario": UsuarioChatSerializer(usuario).data,
             "operador": self.operador,
         })
+        self.prazo_expiracao = asyncio.create_task(self._aguardar_expiracao(vencimento))
+
+    async def _aguardar_expiracao(self, vencimento):
+        while not self.fechando:
+            restante = (vencimento - timezone.now()).total_seconds()
+            if restante <= 0:
+                await self._fechar(4401)
+                return
+            await asyncio.sleep(restante)
 
     async def _validar_acesso(self):
-        usuario = await autenticar_token(self.token)
+        acesso = await autenticar_token(self.token)
+        if self.fechando:
+            return False
+        usuario = acesso.user
         if eh_operador(usuario) != self.operador:
             await self._fechar(4403)
             return False
@@ -213,6 +236,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             return
         self.fechando = True
         await self._cancelar_prazo()
+        await self._cancelar_expiracao()
         await self.close(code=codigo)
 
     async def _cancelar_prazo(self):
@@ -222,15 +246,26 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                 await self.prazo_autenticacao
             self.prazo_autenticacao = None
 
+    async def _cancelar_expiracao(self):
+        tarefa = self.prazo_expiracao
+        self.prazo_expiracao = None
+        if tarefa is not None and tarefa is not asyncio.current_task():
+            tarefa.cancel()
+            with suppress(asyncio.CancelledError):
+                await tarefa
+
     async def chat_evento(self, evento):
         if self.fechando or self.usuario is None:
             return
         try:
-            if await self._validar_acesso() and await self._pode_receber(evento["dados"]):
+            if not await self._validar_acesso():
+                return
+            permitido = await self._pode_receber(evento["dados"])
+            if permitido and not self.fechando:
                 await self.send_json(evento["dados"])
         except AuthenticationFailed:
             await self._fechar(4401)
-        except DatabaseError:
+        except (DatabaseError, SessaoIndisponivel):
             await self._fechar(1013)
 
     @database_sync_to_async

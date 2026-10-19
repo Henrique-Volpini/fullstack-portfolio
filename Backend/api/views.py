@@ -30,6 +30,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle, SimpleRateThrottle
 from rest_framework.views import APIView
 
+from .authentication import obter_token_acesso
 from .models import ContaGoogle, Conversa, Mensagem
 from .serializers import (
     CadastroUsuarioSerializer, ConversaSerializer, CriarConversaSerializer,
@@ -82,7 +83,7 @@ class LoginUsuarioView(APIView):
                 headers={"WWW-Authenticate": "Token"},
             )
 
-        token_acesso, _ = Token.objects.get_or_create(user=usuario)
+        token_acesso = obter_token_acesso(usuario)
         reset(username=usuario.get_username())
 
         return Response(
@@ -167,7 +168,7 @@ class LoginGoogleView(APIView):
             usuario = conta.usuario
             if not usuario.is_active:
                 raise AuthenticationFailed("Esta conta está desativada.")
-            token_acesso, _ = Token.objects.get_or_create(user=usuario)
+            token_acesso = obter_token_acesso(usuario)
         except DatabaseError:
             raise LoginGoogleIndisponivel() from None
 

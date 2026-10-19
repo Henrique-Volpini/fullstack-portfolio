@@ -389,7 +389,6 @@ function Home() {
           id="about"
           aria-labelledby="about-title"
           tabIndex={-1}
-          data-reveal=""
         >
           <div className="about-heading">
             <span className="about-index" aria-hidden="true">

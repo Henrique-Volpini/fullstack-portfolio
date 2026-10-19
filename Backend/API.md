@@ -24,6 +24,16 @@ Accept: application/json
 
 Um usuário comum acessa somente as próprias conversas. Qualquer superusuário ativo acessa todas e responde como Henrique, independentemente do nome de sua conta. A flag `is_staff`, sozinha, não concede esse acesso. O Assistente ainda não gera respostas automáticas.
 
+### Validade do token da API
+
+O token local expira 1 hora após a emissão por padrão. Para configurar outro prazo, defina `DJANGO_TOKEN_TTL_SECONDS` no `Backend/.env` com um inteiro positivo em segundos, por exemplo `DJANGO_TOKEN_TTL_SECONDS=3600`, e reinicie o backend. A configuração é lida em `AUTH_TOKEN_TTL_SECONDS`; valores inválidos impedem a inicialização.
+
+O prazo é absoluto: requisições, pings e novos logins com um token ainda válido não renovam sua emissão nem sua validade. No instante em que `created + prazo` é atingido, o token já está vencido. Tokens existentes também seguem o prazo configurado, contado de sua emissão original.
+
+HTTP rejeita tokens vencidos com `401` e `WWW-Authenticate: Token`. WebSockets recusam a autenticação, comandos e eventos privados com token vencido e encerram com `4401`; uma conexão ociosa também é encerrada automaticamente no vencimento. Ao receber esses resultados, o cliente deve limpar o token local e solicitar novo login.
+
+Os logins por senha e Google reutilizam o token válido ou substituem o vencido. A conta mantém um único token, compartilhado entre dispositivos; logins simultâneos não criam tokens independentes. O formato das respostas de login permanece o mesmo.
+
 ## Endpoints HTTP
 
 | Método | Caminho | Token | Sucesso |
@@ -98,7 +108,7 @@ Resposta `200`:
 }
 ```
 
-O token existente da conta é reutilizado e não tem expiração automática. Credenciais incorretas retornam `401`, com `WWW-Authenticate: Token`:
+O token existente da conta é reutilizado enquanto válido, sem renovar o prazo; se estiver vencido, é substituído por um novo token. Credenciais incorretas retornam `401`, com `WWW-Authenticate: Token`:
 
 ```json
 {
@@ -114,7 +124,7 @@ Depois de 5 falhas, o nome de usuário fica bloqueado por 15 minutos, inclusive 
 }
 ```
 
-Dados ausentes/inválidos retornam `400`. O limite geral do endpoint também pode retornar `429`.
+Dados ausentes/inválidos retornam `400`. O limite geral do endpoint também pode retornar `429`. Falha temporária no banco ao emitir o token retorna `503`; o cliente pode tentar o login novamente.
 
 ### POST `/login/google/`
 
@@ -138,7 +148,7 @@ Requisição:
 
 O servidor verifica assinatura, expiração, emissor e audiência do token para o `GOOGLE_CLIENT_ID` configurado. Também exige `sub` não vazio com até 255 caracteres, e-mail válido com até 254 caracteres e `email_verified: true`.
 
-O vínculo é identificado exclusivamente pelo `sub` único da conta Google. Não há associação automática com contas locais por e-mail ou nome de usuário. No primeiro acesso, cria um usuário comum com senha inutilizável e nome de usuário aleatório no formato `google_<uuid>`; os nomes fornecidos pelo Google são limitados a 150 caracteres em cada campo. Nos próximos acessos com o mesmo `sub`, reutiliza a conta e seu token local existente. Contas desativadas não podem entrar.
+O vínculo é identificado exclusivamente pelo `sub` único da conta Google. Não há associação automática com contas locais por e-mail ou nome de usuário. No primeiro acesso, cria um usuário comum com senha inutilizável e nome de usuário aleatório no formato `google_<uuid>`; os nomes fornecidos pelo Google são limitados a 150 caracteres em cada campo. Nos próximos acessos com o mesmo `sub`, reutiliza a conta e seu token local enquanto válido, sem renovar o prazo; se estiver vencido, substitui o token. Contas desativadas não podem entrar.
 
 Resposta `200`, tanto na criação quanto nos acessos seguintes:
 
@@ -163,7 +173,7 @@ No frontend, `VITE_GOOGLE_CLIENT_ID` fica em `Frontend/.env` com o mesmo Client 
 
 Exige o token no cabeçalho e não recebe corpo. Resposta `204`, sem JSON.
 
-Revoga o token utilizado e notifica os WebSockets desse acesso para encerramento. Como o token é compartilhado pelos logins da conta, a revogação também afeta outros dispositivos que o utilizem. Logout continua permitido quando a cota HTTP do chat está esgotada. Token inválido/ausente retorna `401`.
+Revoga o token utilizado e notifica os WebSockets desse acesso para encerramento. Como o token é compartilhado pelos logins da conta, a revogação também afeta outros dispositivos que o utilizem. Logout continua permitido quando a cota HTTP do chat está esgotada. Token inválido, ausente ou vencido retorna `401`; nesse caso, o cliente pode apenas limpar a sessão local.
 
 ### GET `/chat/`
 
@@ -504,6 +514,8 @@ O formato depende da origem do erro. Validação do corpo normalmente retorna um
 }
 ```
 
+Token inválido ou vencido também retorna `401`, com `WWW-Authenticate: Token`; execute novo login para obter acesso novamente.
+
 `403`, tentativa de superusuário abrir conversa como visitante:
 
 ```json
@@ -599,7 +611,7 @@ Resposta do servidor:
 }
 ```
 
-`operador` é `true` para qualquer superusuário ativo. O objeto `usuario` identifica somente a própria conexão; o autor público das mensagens é informado em `mensagem.remetente`. Token inválido/inativo ou comando antes da autenticação produz erro e encerramento; ausência de autenticação dentro do prazo encerra a conexão.
+`operador` é `true` para qualquer superusuário ativo. O objeto `usuario` identifica somente a própria conexão; o autor público das mensagens é informado em `mensagem.remetente`. Token inválido/vencido, conta inativa ou comando antes da autenticação produz erro e encerramento; ausência de autenticação dentro do prazo encerra a conexão.
 
 ### Enviar mensagem
 
@@ -733,7 +745,7 @@ Servidor:
 }
 ```
 
-O ping verifica o acesso e renova a participação da conexão no grupo. Criação/listagem de conversas e consultas de histórico são feitas por HTTP.
+O ping verifica o acesso e renova a participação da conexão no grupo, sem estender a validade do token. Criação/listagem de conversas e consultas de histórico são feitas por HTTP.
 
 ### Erros de comandos
 
@@ -767,13 +779,13 @@ JSON inválido após autenticação retorna `erro` com status `400` e mantém a 
 | `1009` | Frame maior que o limite. |
 | `1013` | Serviço temporariamente indisponível. |
 | `4400` | Query string não permitida. |
-| `4401` | Token inválido/revogado, conta inativa ou prazo de autenticação esgotado. |
+| `4401` | Token inválido/revogado/vencido, conta inativa ou prazo de autenticação esgotado. |
 | `4403` | Papel da conta mudou; reconecte e autentique novamente. |
 | `4429` | Limite de conexões ou frames. |
 
 Rejeições anteriores ao aceite, como origem inválida, query string ou cota de conexões, podem aparecer no navegador como falha de handshake HTTP `403`, sem expor o código de fechamento da aplicação. Falhas de rede podem produzir outros códigos do protocolo.
 
-O token, o papel e o acesso à conversa são revalidados nos comandos e antes de entregar eventos privados. Logout notifica as conexões do token revogado para encerramento quando o transporte está disponível.
+O token, sua validade, o papel e o acesso à conversa são revalidados nos comandos e antes de entregar eventos privados. A conexão é encerrada automaticamente com `4401` no vencimento do token, mesmo sem comandos ou eventos. Logout notifica as conexões do token revogado para encerramento quando o transporte está disponível.
 
 ## Limites e recuperação
 

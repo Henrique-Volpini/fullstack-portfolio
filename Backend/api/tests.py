@@ -169,15 +169,35 @@ class ProtecaoAutenticacaoTests(APITestCase):
         self.assertIn("token", resposta.json())
         self.assertNotIn("sessionid", resposta.cookies)
 
-    def test_token_existente_nao_e_expirado_ou_substituido(self):
+    def test_login_substitui_token_expirado_e_invalida_chave_anterior(self):
         token = Token.objects.create(user=self.usuario)
         Token.objects.filter(pk=token.pk).update(created=timezone.now() - timedelta(days=2))
         resposta = self.login()
         self.assertEqual(resposta.status_code, 200)
+        self.assertNotEqual(resposta.json()["token"], token.key)
+        self.assertEqual(Token.objects.filter(user=self.usuario).count(), 1)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
+        self.assertEqual(self.client.get("/chat/").status_code, 401)
+        self.assertNotIn("sessionid", resposta.cookies)
+
+    @override_settings(AUTH_TOKEN_TTL_SECONDS=3600)
+    def test_novo_login_nao_prorroga_token_ainda_valido(self):
+        token = Token.objects.create(user=self.usuario)
+        criado = timezone.now() - timedelta(minutes=30)
+        Token.objects.filter(pk=token.pk).update(created=criado)
+        resposta = self.login()
+        self.assertEqual(resposta.status_code, 200)
         self.assertEqual(resposta.json()["token"], token.key)
+        self.assertEqual(Token.objects.get(user=self.usuario).created, criado)
+
+    def test_login_de_usuario_desativado_nao_emite_token(self):
+        get_user_model().objects.filter(pk=self.usuario.pk).update(is_active=False)
+        self.assertEqual(self.login().status_code, 401)
+        self.assertFalse(Token.objects.filter(user=self.usuario).exists())
 
 
 CONFIG_TESTES = {
+    "AUTH_TOKEN_TTL_SECONDS": 3600,
     "PASSWORD_HASHERS": ["django.contrib.auth.hashers.MD5PasswordHasher"],
     "CACHES": {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}},
     "CHANNEL_LAYERS": {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}},
@@ -256,6 +276,7 @@ class LoginGoogleTests(APITestCase):
     def test_mesmo_sub_reutiliza_usuario_e_token_mesmo_com_email_alterado(self):
         primeira = self.login()
         self.assertEqual(primeira.status_code, 200)
+        criado = Token.objects.get().created
         self.claims["email"] = "novo-email@example.com"
         segunda = self.login()
         self.assertEqual(segunda.status_code, 200)
@@ -264,6 +285,27 @@ class LoginGoogleTests(APITestCase):
         self.assertEqual(get_user_model().objects.count(), 1)
         self.assertEqual(ContaGoogle.objects.count(), 1)
         self.assertEqual(Token.objects.count(), 1)
+        self.assertEqual(Token.objects.get().created, criado)
+
+    def test_novo_login_google_renova_token_no_limite_exato_de_validade(self):
+        primeira = self.login()
+        self.assertEqual(primeira.status_code, 200)
+        token = Token.objects.get()
+        vencimento = token.created + timedelta(hours=1)
+        with patch("api.authentication.timezone.now", return_value=vencimento):
+            segunda = self.login()
+        self.assertEqual(segunda.status_code, 200)
+        self.assertNotEqual(segunda.json()["token"], primeira.json()["token"])
+        self.assertEqual(segunda.json()["usuario"], primeira.json()["usuario"])
+        renovado = Token.objects.get()
+        self.assertEqual(renovado.created, vencimento)
+        self.assertEqual(get_user_model().objects.count(), 1)
+        self.assertEqual(ContaGoogle.objects.count(), 1)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
+        self.assertEqual(self.client.get("/chat/").status_code, 401)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Token {renovado.key}")
+        self.assertEqual(self.client.get("/chat/").status_code, 200)
+        self.assertNotIn("sessionid", segunda.cookies)
 
     def test_email_de_contas_locais_inclusive_admin_nao_associa_usuarios(self):
         usuarios = get_user_model()
@@ -556,6 +598,82 @@ class LoginGoogleConcorrenciaTests(TransactionTestCase):
                 self.assertEqual(dados["usuario"]["id"], conta.usuario_id)
 
 
+@override_settings(**CONFIG_TESTES, GOOGLE_CLIENT_ID="cliente-google.apps.googleusercontent.com")
+class TokenExpiracaoConcorrenciaTests(TransactionTestCase):
+    def setUp(self):
+        cache.clear()
+        self.password = "SenhaForte!93q8z7"
+        self.usuario = get_user_model().objects.create_user(
+            username="tokens_concorrentes", password=self.password,
+        )
+        ContaGoogle.objects.create(usuario=self.usuario, sub="sub-token-concorrente")
+        self.token = Token.objects.create(user=self.usuario)
+        Token.objects.filter(pk=self.token.pk).update(
+            created=timezone.now() - timedelta(days=2)
+        )
+
+    def test_logins_senha_e_google_concorrentes_compartilham_uma_unica_renovacao(self):
+        from .authentication import obter_token_acesso
+
+        barreira = Barrier(2)
+
+        def obter_sincronizado(usuario):
+            barreira.wait(timeout=5)
+            return obter_token_acesso(usuario)
+
+        def enviar(tipo):
+            close_old_connections()
+            try:
+                connection.ensure_connection()
+                conexao = id(connection.connection)
+                if tipo == "senha":
+                    caminho = "/login/"
+                    dados = {"username": self.usuario.username, "password": self.password}
+                else:
+                    caminho = "/login/google/"
+                    dados = {"credential": "id-token-google"}
+                resposta = APIClient().post(
+                    caminho, dados, format="json", REMOTE_ADDR="192.0.2.30",
+                )
+                return conexao, resposta.status_code, resposta.json()
+            finally:
+                close_old_connections()
+
+        claims = {
+            "sub": "sub-token-concorrente", "email": "concorrente@example.com",
+            "email_verified": True,
+        }
+        with (
+            patch("api.views.id_token.verify_oauth2_token", return_value=claims),
+            patch("api.views.obter_token_acesso", side_effect=obter_sincronizado),
+            ThreadPoolExecutor(max_workers=2) as executor,
+        ):
+            tarefas = [executor.submit(enviar, tipo) for tipo in ("senha", "google")]
+            respostas = [tarefa.result(timeout=15) for tarefa in tarefas]
+
+        self.assertEqual(len({conexao for conexao, _, _ in respostas}), 2)
+        self.assertTrue(all(status in (200, 503) for _, status, _ in respostas), respostas)
+        repetida = APIClient().post(
+            "/login/", {"username": self.usuario.username, "password": self.password},
+            format="json", REMOTE_ADDR="192.0.2.31",
+        )
+        self.assertEqual(repetida.status_code, 200)
+        renovado = Token.objects.get(user=self.usuario)
+        self.assertNotEqual(renovado.key, self.token.key)
+        self.assertEqual(Token.objects.count(), 1)
+        self.assertFalse(Token.objects.filter(key=self.token.key).exists())
+        for _, status, dados in respostas:
+            if status == 200:
+                self.assertEqual(dados["token"], repetida.json()["token"])
+            else:
+                self.assertNotIn("database", str(dados).lower())
+        cliente = APIClient()
+        cliente.credentials(HTTP_AUTHORIZATION=f"Token {self.token.key}")
+        self.assertEqual(cliente.get("/chat/").status_code, 401)
+        cliente.credentials(HTTP_AUTHORIZATION=f"Token {renovado.key}")
+        self.assertEqual(cliente.get("/chat/").status_code, 200)
+
+
 class DadosChatMixin:
     def preparar_dados(self):
         cache.clear()
@@ -592,6 +710,107 @@ class DadosChatMixin:
             f"/chat/conversas/{conversa.pk}/leitura/",
             {"mensagem_id": mensagem_id}, format="json",
         )
+
+
+@override_settings(**CONFIG_TESTES)
+class TokenExpiracaoHTTPTests(DadosChatMixin, APITestCase):
+    def setUp(self):
+        self.preparar_dados()
+
+    def test_validade_configuravel_rejeita_no_limite_exato_sem_prorrogar(self):
+        criado = self.token.created
+        for ttl in (60, 3600):
+            with self.subTest(ttl=ttl), override_settings(AUTH_TOKEN_TTL_SECONDS=ttl):
+                vencimento = criado + timedelta(seconds=ttl)
+                with patch(
+                    "api.authentication.timezone.now",
+                    return_value=vencimento - timedelta(microseconds=1),
+                ):
+                    self.assertEqual(self.client.get("/chat/").status_code, 200)
+                with patch("api.authentication.timezone.now", return_value=vencimento):
+                    resposta = self.client.get("/chat/")
+                self.assertEqual(resposta.status_code, 401)
+                self.assertEqual(resposta["WWW-Authenticate"], "Token")
+                self.assertNotIn("sessionid", resposta.cookies)
+                self.token.refresh_from_db()
+                self.assertEqual(self.token.created, criado)
+
+    def test_token_vencido_nao_le_escreve_faz_logout_ou_cria_sessao(self):
+        vencimento = self.token.created + timedelta(hours=1)
+        requisicoes = (
+            ("get", "/chat/", None),
+            ("get", "/chat/conversas/", None),
+            ("get", f"/chat/conversas/{self.conversa.pk}/", None),
+            ("get", f"/chat/conversas/{self.conversa.pk}/mensagens/", None),
+            ("post", "/chat/conversas/", {"destinatario": "henrique"}),
+            ("post", f"/chat/conversas/{self.conversa.pk}/mensagens/", {
+                "conteudo": "Nao pode gravar", "id_cliente": str(uuid.uuid4()),
+            }),
+            ("post", f"/chat/conversas/{self.conversa.pk}/leitura/", {"mensagem_id": 1}),
+            ("post", "/logout/", {}),
+        )
+        with patch("api.authentication.timezone.now", return_value=vencimento):
+            for metodo, caminho, dados in requisicoes:
+                with self.subTest(metodo=metodo, caminho=caminho):
+                    enviar = getattr(self.client, metodo)
+                    resposta = enviar(caminho) if dados is None else enviar(caminho, dados, format="json")
+                    self.assertEqual(resposta.status_code, 401)
+                    self.assertNotIn("sessionid", resposta.cookies)
+        self.assertEqual(Mensagem.objects.count(), 0)
+        self.assertEqual(Conversa.objects.filter(usuario=self.usuario).count(), 2)
+        self.assertTrue(Token.objects.filter(key=self.token.key).exists())
+
+    def test_login_senha_renova_no_limite_e_novo_token_autentica(self):
+        vencimento = self.token.created + timedelta(hours=1)
+        self.client.credentials()
+        with patch("api.authentication.timezone.now", return_value=vencimento):
+            resposta = self.client.post(
+                "/login/", {"username": self.usuario.username, "password": "SenhaForte!93q8z7"},
+                format="json",
+            )
+        self.assertEqual(resposta.status_code, 200)
+        renovado = Token.objects.get(user=self.usuario)
+        self.assertEqual(renovado.created, vencimento)
+        self.assertNotEqual(renovado.key, self.token.key)
+        self.autorizar(self.token)
+        self.assertEqual(self.client.get("/chat/").status_code, 401)
+        self.autorizar(renovado)
+        self.assertEqual(self.client.get("/chat/").status_code, 200)
+        self.assertNotIn("sessionid", resposta.cookies)
+
+    def test_falha_de_banco_na_autenticacao_e_emissao_e_recuperavel(self):
+        with patch.object(Token.objects, "select_related", side_effect=OperationalError("detalhe interno")):
+            resposta = self.client.get("/chat/")
+        self.assertEqual(resposta.status_code, 503)
+        self.assertNotIn("detalhe interno", str(resposta.json()))
+        self.client.credentials()
+        with patch.object(Token.objects, "get_or_create", side_effect=OperationalError("detalhe interno")):
+            resposta = self.client.post(
+                "/login/", {"username": self.usuario.username, "password": "SenhaForte!93q8z7"},
+                format="json",
+            )
+        self.assertEqual(resposta.status_code, 503)
+        self.assertNotIn("detalhe interno", str(resposta.json()))
+
+    def test_perdedor_da_renovacao_rele_token_ja_emitido_pelo_outro_login(self):
+        from django.db.models.query import QuerySet
+        from .authentication import obter_token_acesso
+
+        Token.objects.filter(key=self.token.key).update(created=timezone.now() - timedelta(days=2))
+        atualizar = QuerySet.update
+        criado = timezone.now()
+
+        def simular_vencedor(consulta, **valores):
+            atualizar(consulta, key="f" * 40, created=criado)
+            return 0
+
+        with patch.object(QuerySet, "update", autospec=True, side_effect=simular_vencedor) as tentativa:
+            token = obter_token_acesso(self.usuario)
+        tentativa.assert_called_once()
+        self.assertEqual(token.key, "f" * 40)
+        self.assertEqual(token.created, criado)
+        self.assertEqual(Token.objects.filter(user=self.usuario).count(), 1)
+        self.assertFalse(Token.objects.filter(key=self.token.key).exists())
 
 
 @override_settings(**CONFIG_TESTES)
@@ -955,6 +1174,116 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
             await inativo.send_json_to({"type": "autenticar", "token": self.token.key})
             self.assertEqual((await inativo.receive_json_from())["status"], 401)
 
+    async def test_token_expirado_nao_autentica_websocket(self):
+        await Token.objects.filter(key=self.token.key).aupdate(
+            created=timezone.now() - timedelta(days=2)
+        )
+        async with self.conexoes() as conectar:
+            socket = await conectar()
+            await socket.send_json_to({"type": "autenticar", "token": self.token.key})
+            self.assertEqual((await socket.receive_json_from())["status"], 401)
+            self.assertEqual((await socket.receive_output())["code"], 4401)
+
+    @override_settings(AUTH_TOKEN_TTL_SECONDS=0.2)
+    async def test_socket_ocioso_fecha_quando_token_expira(self):
+        await Token.objects.filter(key=self.token.key).aupdate(created=timezone.now())
+        async with self.conexoes() as conectar:
+            socket = await conectar(self.token)
+            self.assertEqual((await socket.receive_output(timeout=1))["code"], 4401)
+
+    @override_settings(AUTH_TOKEN_TTL_SECONDS=0.6)
+    async def test_ping_e_segunda_conexao_nao_prorrogam_prazo_da_sessao(self):
+        criado = timezone.now()
+        await Token.objects.filter(key=self.token.key).aupdate(created=criado)
+        async with self.conexoes() as conectar:
+            primeiro = await conectar(self.token)
+            await asyncio.sleep(0.2)
+            segundo = await conectar(self.token)
+            for socket in (primeiro, segundo):
+                await socket.send_json_to({"type": "ping"})
+                self.assertEqual((await socket.receive_json_from())["type"], "pong")
+            self.assertEqual((await primeiro.receive_output(timeout=1))["code"], 4401)
+            self.assertEqual((await segundo.receive_output(timeout=0.15))["code"], 4401)
+            self.assertEqual((await Token.objects.aget(user=self.usuario)).created, criado)
+
+    @override_settings(AUTH_TOKEN_TTL_SECONDS=0.2)
+    async def test_desconectar_cancela_task_de_expiracao_sem_envio_tardio(self):
+        from .websocket import ChatConsumer
+
+        tarefas = []
+        aguardar = ChatConsumer._aguardar_expiracao
+
+        async def observar(consumer, vencimento):
+            tarefas.append(asyncio.current_task())
+            await aguardar(consumer, vencimento)
+
+        await Token.objects.filter(key=self.token.key).aupdate(created=timezone.now())
+        with patch.object(ChatConsumer, "_aguardar_expiracao", new=observar):
+            async with self.conexoes() as conectar:
+                socket = await conectar(self.token)
+                await asyncio.sleep(0)
+                self.assertEqual(len(tarefas), 1)
+                self.assertFalse(tarefas[0].done())
+                await socket.disconnect()
+                self.assertTrue(tarefas[0].cancelled())
+                await asyncio.sleep(0.25)
+                self.assertTrue(await socket.receive_nothing(timeout=0.01))
+
+    async def test_sessao_vencida_revalida_comando_e_novo_login_permite_reconectar(self):
+        async with self.conexoes() as conectar:
+            socket = await conectar(self.token)
+            await Token.objects.filter(key=self.token.key).aupdate(
+                created=timezone.now() - timedelta(days=2)
+            )
+            await socket.send_json_to({"type": "ping"})
+            self.assertEqual((await socket.receive_json_from())["status"], 401)
+            self.assertEqual((await socket.receive_output())["code"], 4401)
+            self.client.credentials()
+            resposta = await database_sync_to_async(self.client.post)(
+                "/login/", {"username": self.usuario.username, "password": "SenhaForte!93q8z7"},
+                format="json",
+            )
+            self.assertEqual(resposta.status_code, 200)
+            renovado = await Token.objects.select_related("user").aget(user=self.usuario)
+            self.assertNotEqual(renovado.key, self.token.key)
+            novo_socket = await conectar(renovado)
+            await novo_socket.send_json_to({"type": "ping"})
+            self.assertEqual((await novo_socket.receive_json_from())["type"], "pong")
+
+    async def test_sessao_vencida_nao_recebe_eventos_privados(self):
+        async with self.conexoes() as conectar:
+            socket = await conectar(self.token)
+            await Token.objects.filter(key=self.token.key).aupdate(
+                created=timezone.now() - timedelta(days=2)
+            )
+            await get_channel_layer().group_send(grupo_usuario(self.usuario.pk), {
+                "type": "chat.evento", "dados": {
+                    "type": "mensagem.criada", "mensagem": {
+                        "conversa_id": str(self.conversa.pk), "conteudo": "privado",
+                    },
+                },
+            })
+            self.assertEqual((await socket.receive_output())["code"], 4401)
+            self.assertTrue(await socket.receive_nothing(timeout=0.01))
+
+    @override_settings(AUTH_TOKEN_TTL_SECONDS=0.2)
+    async def test_operacao_lenta_nao_envia_confirmacao_apos_expiracao(self):
+        async def demorar(*args):
+            await asyncio.sleep(0.35)
+            return {"type": "mensagem.confirmada", "mensagem": {"conteudo": "tardio"}}
+
+        await Token.objects.filter(key=self.token.key).aupdate(created=timezone.now())
+        async with self.conexoes() as conectar:
+            socket = await conectar(self.token)
+            with patch("api.websocket.ChatConsumer._enviar", new=AsyncMock(side_effect=demorar)):
+                await socket.send_json_to({
+                    "type": "mensagem.enviar", "conversa_id": str(self.conversa.pk),
+                    "conteudo": "Mensagem", "id_cliente": str(uuid.uuid4()),
+                })
+                self.assertEqual((await socket.receive_output(timeout=1))["code"], 4401)
+                await asyncio.sleep(0.4)
+                self.assertTrue(await socket.receive_nothing(timeout=0.01))
+
     @override_settings(CHAT_WEBSOCKET_AUTH_TIMEOUT=0.02)
     async def test_conexao_sem_autenticacao_expira(self):
         async with self.conexoes() as conectar:
@@ -965,7 +1294,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
     async def test_autenticacao_lenta_nao_reabre_conexao_apos_expirar_prazo(self):
         async def demorar(token):
             await asyncio.sleep(0.08)
-            return self.usuario
+            return self.token
 
         async with self.conexoes() as conectar:
             socket = await conectar()
