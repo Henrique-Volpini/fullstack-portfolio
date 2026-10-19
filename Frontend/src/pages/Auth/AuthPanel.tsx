@@ -1,14 +1,17 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import Chat from "../Chat/Chat";
 import { apiUrl } from "../Chat/chatApi";
+import GoogleSignIn from "./GoogleSignIn";
 import "./AuthPanel.css";
 
 type AuthView = "login" | "cadastro";
-type SubmitState = "idle" | AuthView;
+type SubmitState = "idle" | AuthView | "google";
 type AuthNotice = { type: "error"; message: string };
 
 const SESSION_EXPIRED_MESSAGE = "Sua sessão expirou. Entre novamente para continuar.";
 const TOKEN_STORAGE_KEY = "portfolio.chat.token";
+// O backend rejeita credenciais maiores que isso; falhar aqui evita uma requisição inútil.
+const MAX_GOOGLE_CREDENTIAL_LENGTH = 8192;
 
 function readStoredToken(): string | null {
   try {
@@ -27,9 +30,29 @@ function storeToken(token: string | null) {
   }
 }
 
+function describeGoogleStatus(status: number, data: unknown, retryAfter: string | null): string {
+  if (status === 401) {
+    const detail = data && typeof data === "object" && "detail" in data ? data.detail : null;
+    return typeof detail === "string" && detail.trim()
+      ? detail
+      : "O Google não confirmou seu acesso. Tente novamente.";
+  }
+  if (status === 429) {
+    const seconds = Number.parseInt(retryAfter ?? "", 10);
+    return Number.isFinite(seconds) && seconds > 0
+      ? `Muitas tentativas de login. Tente de novo em ${seconds} s.`
+      : "Muitas tentativas de login. Aguarde um instante e tente de novo.";
+  }
+  if (status >= 500) return "O login com Google está indisponível no momento. Tente novamente em instantes.";
+  if (status === 400 || status === 415) {
+    return "Não foi possível validar a credencial do Google. Tente novamente.";
+  }
+  return "Não foi possível entrar com o Google. Tente novamente.";
+}
+
 async function sendAuthRequest(
-  endpoint: "login" | "usuarios",
-  data: { username: string; password: string; email?: string },
+  endpoint: "login" | "usuarios" | "login/google",
+  data: { username: string; password: string; email?: string } | { credential: string },
   signal: AbortSignal,
 ): Promise<Record<string, unknown>> {
   const response = await fetch(`${apiUrl}/${endpoint}/`, {
@@ -43,6 +66,10 @@ async function sendAuthRequest(
   signal.throwIfAborted();
 
   if (!response.ok) {
+    if (endpoint === "login/google") {
+      throw new Error(describeGoogleStatus(response.status, result, response.headers.get("Retry-After")));
+    }
+
     if (response.status >= 500) {
       throw new Error("O servidor está indisponível. Tente novamente em instantes.");
     }
@@ -99,13 +126,19 @@ function AuthPanel() {
   const flipDuration = useRef(700);
   const contentWasOpen = useRef(false);
   const request = useRef<AbortController | null>(null);
+  const feedback = useRef<HTMLDivElement>(null);
   const isAuthenticated = accessToken !== null;
-  const isSubmitting = submitState === "login" || submitState === "cadastro";
+  const isSubmitting = submitState !== "idle";
 
   useEffect(() => () => {
     request.current?.abort();
     request.current = null;
   }, []);
+
+  useEffect(() => {
+    // Em telas baixas o diálogo rola; o botão do Google fica no topo e o aviso no fim.
+    if (notice) feedback.current?.scrollIntoView({ block: "nearest" });
+  }, [notice]);
 
   useLayoutEffect(() => {
     const element = panel.current;
@@ -134,7 +167,7 @@ function AuthPanel() {
     if (!isOpen || !panel.current) return;
 
     const elements = panel.current.querySelectorAll<HTMLElement>(
-      ".auth-panel-heading, .auth-panel-field",
+      ".auth-panel-heading, .auth-panel-google, .auth-panel-field",
     );
     const animations = Array.from(elements, (element, index) => element.animate(
       [
@@ -261,6 +294,59 @@ function AuthPanel() {
     }
   };
 
+  const acceptLogin = (login: Record<string, unknown>) => {
+    if (typeof login.token !== "string" || !login.token.trim()) {
+      throw new Error("O servidor não confirmou o login. Tente novamente.");
+    }
+
+    storeToken(login.token);
+    setAccessToken(login.token);
+    setMinimized(window.matchMedia("(max-width: 680px)").matches);
+    setExpired(false);
+    setSubmitState("idle");
+    setNotice(null);
+    window.setTimeout(() => chatFocusTarget(panel.current)?.focus(), 1100);
+  };
+
+  const handleGoogleCredential = async (credential: string) => {
+    if (request.current || isAuthenticated || !isOpen) return;
+
+    if (!credential || credential.length > MAX_GOOGLE_CREDENTIAL_LENGTH) {
+      setNotice({ type: "error", message: "Não foi possível obter a credencial do Google. Tente novamente." });
+      return;
+    }
+
+    const controller = new AbortController();
+    request.current = controller;
+    setSubmitState("google");
+    setNotice(null);
+    let timedOut = false;
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 15000);
+
+    try {
+      const login = await sendAuthRequest("login/google", { credential }, controller.signal);
+      if (request.current !== controller) return;
+      acceptLogin(login);
+    } catch (error) {
+      if (request.current !== controller) return;
+      setSubmitState("idle");
+      setNotice({
+        type: "error",
+        message: timedOut
+          ? "O servidor demorou para responder. Tente novamente."
+          : error instanceof TypeError
+            ? "Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente."
+            : error instanceof Error ? error.message : "Não foi possível entrar com o Google.",
+      });
+    } finally {
+      window.clearTimeout(timeout);
+      if (request.current === controller) request.current = null;
+    }
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (request.current || isAuthenticated) return;
@@ -301,18 +387,8 @@ function AuthPanel() {
 
       const login = await sendAuthRequest("login", { username, password }, controller.signal);
       if (request.current !== controller) return;
-      if (typeof login.token !== "string" || !login.token.trim()) {
-        throw new Error("O servidor não confirmou o login. Tente novamente.");
-      }
-
+      acceptLogin(login);
       form.reset();
-      storeToken(login.token);
-      setAccessToken(login.token);
-      setMinimized(window.matchMedia("(max-width: 680px)").matches);
-      setExpired(false);
-      setSubmitState("idle");
-      setNotice(null);
-      window.setTimeout(() => chatFocusTarget(panel.current)?.focus(), 1100);
     } catch (error) {
       if (request.current !== controller) return;
       const message = timedOut
@@ -439,6 +515,13 @@ function AuthPanel() {
                 </button>
               </div>
 
+              <GoogleSignIn
+                active={isOpen}
+                disabled={isSubmitting}
+                mode={view}
+                onCredential={handleGoogleCredential}
+              />
+
               <form className="auth-panel-form" onSubmit={handleSubmit} aria-busy={isSubmitting}>
                 <div className="auth-panel-fields" key={view}>
                   <div className="auth-panel-field">
@@ -491,14 +574,18 @@ function AuthPanel() {
                         : submitState === "login" ? "Entrando…"
                           : view === "login" ? "Entrar" : "Criar conta"}
                     </span>
-                    {isSubmitting && (
+                    {(submitState === "login" || submitState === "cadastro") && (
                       <svg className="auth-panel-spinner" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                         <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" strokeDasharray="42 15" strokeLinecap="round" />
                       </svg>
                     )}
                   </button>
-                  <div className="auth-panel-feedback">
-                    {isSubmitting && <p className="auth-panel-wait" role="status">Aguarde, estamos {submitState === "cadastro" ? "criando sua conta" : "confirmando seu acesso"}…</p>}
+                  <div className="auth-panel-feedback" ref={feedback}>
+                    {isSubmitting && (
+                      <p className="auth-panel-wait" role="status">
+                        Aguarde, estamos {submitState === "cadastro" ? "criando sua conta" : submitState === "google" ? "confirmando seu acesso com o Google" : "confirmando seu acesso"}…
+                      </p>
+                    )}
                     {notice && (
                       <p className="auth-panel-notice" data-type={notice.type} role="alert">
                         {notice.message}

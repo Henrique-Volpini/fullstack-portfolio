@@ -157,7 +157,7 @@ Use o `token` retornado pelo Django no cabeçalho `Authorization: Token ...`, in
 
 Erros: `400` para corpo ou `credential` inválido; `401` para credencial Google rejeitada ou conta inativa; `415` para tipo de conteúdo não suportado; `429` para limite de requisições; `503` quando falta `GOOGLE_CLIENT_ID`, a consulta ao Google falha ou excede o timeout de 5 segundos, ou o banco está indisponível. O limite de 20 requisições/minuto por IP é compartilhado com `/login/`; o bloqueio por 5 senhas incorretas descrito no login local não se aplica a esta rota.
 
-No frontend, `VITE_GOOGLE_CLIENT_ID` fica em `Frontend/.env` com o mesmo Client ID público. O botão Google e o envio de `credential` pelo frontend ainda não estão implementados.
+No frontend, `VITE_GOOGLE_CLIENT_ID` fica em `Frontend/.env` com o mesmo Client ID público.
 
 ### POST `/logout/`
 
