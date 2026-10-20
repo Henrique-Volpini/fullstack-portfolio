@@ -1,3 +1,7 @@
+import base64
+import binascii
+import json
+import re
 from collections.abc import Mapping
 
 from django.contrib.auth import get_user_model
@@ -18,6 +22,26 @@ class LoginGoogleSerializer(serializers.Serializer):
     def validate_credential(self, credential):
         if not isinstance(self.initial_data.get("credential"), str) or not credential.strip():
             raise serializers.ValidationError("Informe a credencial do Google como texto.")
+        try:
+            partes = credential.split(".")
+            if len(partes) != 3 or any(
+                re.fullmatch(r"[A-Za-z0-9_-]+", parte) is None for parte in partes
+            ):
+                raise ValueError
+            decodificadas = [
+                base64.b64decode(parte + "=" * (-len(parte) % 4), altchars=b"-_", validate=True)
+                for parte in partes
+            ]
+            cabecalho, corpo = [json.loads(parte.decode("utf-8")) for parte in decodificadas[:2]]
+            if (
+                not isinstance(cabecalho, dict) or not isinstance(corpo, dict)
+                or cabecalho.get("alg") != "RS256"
+                or not isinstance(cabecalho.get("kid"), str) or not cabecalho["kid"].strip()
+            ):
+                raise ValueError
+        except (ValueError, binascii.Error, UnicodeError, RecursionError):
+            raise serializers.ValidationError("Informe uma credencial Google no formato JWT válido.") from None
+        # Os dados decodificados não são confiáveis até a verificação criptográfica.
         return credential
 
 

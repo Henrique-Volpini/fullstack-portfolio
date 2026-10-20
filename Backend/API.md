@@ -136,7 +136,7 @@ Aceita somente `Content-Type: application/json`.
 
 | Campo | Tipo | Obrigatório | Validação |
 | --- | --- | --- | --- |
-| `credential` | string | Sim | ID token do Google não vazio, com até 8.192 caracteres. |
+| `credential` | string | Sim | ID token do Google com até 8.192 caracteres e estrutura JWT válida. |
 
 Requisição:
 
@@ -146,7 +146,9 @@ Requisição:
 }
 ```
 
-O servidor verifica assinatura, expiração, emissor e audiência do token para o `GOOGLE_CLIENT_ID` configurado. Também exige `sub` não vazio com até 255 caracteres, e-mail válido com até 254 caracteres e `email_verified: true`.
+Antes de qualquer consulta externa, o servidor exige três segmentos base64url, cabeçalho e payload JSON do tipo objeto, `alg: "RS256"` e `kid` não vazio. Uma credencial malformada retorna `400`. Essa verificação de formato não comprova autenticidade: o verificador Google continua validando assinatura, expiração, emissor e audiência para o `GOOGLE_CLIENT_ID` configurado. Também são exigidos `sub` não vazio com até 255 caracteres, e-mail válido com até 254 caracteres e `email_verified: true`; rejeições nessa etapa retornam `401`.
+
+Somente os certificados públicos são guardados em cache na memória de cada processo, entre requisições; não há cache de ID tokens ou sessões. A validade considera `Cache-Control: max-age`, `Age`, `Date` e `Expires`. Respostas com `no-cache`, `no-store` ou sem validade informada não são reutilizadas; certificados vencidos também não são usados. Com certificados válidos em cache, a validação continua funcionando mesmo se o Google estiver indisponível. Quando uma consulta externa é necessária, há no máximo uma em andamento por processo, com timeout de 5 segundos; outra tentativa que necessite de consulta simultânea recebe `503` e pode ser repetida. O cache não exige Redis ou PostgreSQL.
 
 O vínculo é identificado exclusivamente pelo `sub` único da conta Google. Não há associação automática com contas locais por e-mail ou nome de usuário. No primeiro acesso, cria um usuário comum com senha inutilizável e nome de usuário aleatório no formato `google_<uuid>`; os nomes fornecidos pelo Google são limitados a 150 caracteres em cada campo. Nos próximos acessos com o mesmo `sub`, reutiliza a conta e seu token local enquanto válido, sem renovar o prazo; se estiver vencido, substitui o token. Contas desativadas não podem entrar.
 
@@ -165,7 +167,7 @@ Resposta `200`, tanto na criação quanto nos acessos seguintes:
 
 Use o `token` retornado pelo Django no cabeçalho `Authorization: Token ...`, inclusive para consultar o perfil em `GET /chat/` e revogar o acesso em `POST /logout/`. O ID token Google não substitui esse token local nem deve ser enviado ao WebSocket.
 
-Erros: `400` para corpo ou `credential` inválido; `401` para credencial Google rejeitada ou conta inativa; `415` para tipo de conteúdo não suportado; `429` para limite de requisições; `503` quando falta `GOOGLE_CLIENT_ID`, a consulta ao Google falha ou excede o timeout de 5 segundos, ou o banco está indisponível. O limite de 20 requisições/minuto por IP é compartilhado com `/login/`; o bloqueio por 5 senhas incorretas descrito no login local não se aplica a esta rota.
+Erros: `400` para corpo ou estrutura de `credential` inválidos; `401` para credencial Google rejeitada ou conta inativa; `415` para tipo de conteúdo não suportado; `429` para limite de requisições; `503` quando falta `GOOGLE_CLIENT_ID`, não há certificados válidos em cache e a consulta ao Google falha, excede o timeout ou já está em andamento, ou o banco está indisponível. O limite de 20 requisições/minuto por IP é compartilhado com `/login/`; o bloqueio por 5 senhas incorretas descrito no login local não se aplica a esta rota.
 
 No frontend, `VITE_GOOGLE_CLIENT_ID` fica em `Frontend/.env` com o mesmo Client ID público.
 

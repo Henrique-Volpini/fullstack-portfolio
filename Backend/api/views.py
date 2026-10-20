@@ -1,6 +1,9 @@
 import hashlib
+import json
 import logging
 from functools import partial
+from threading import Lock
+from time import monotonic, time
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -13,10 +16,14 @@ from django.db import DatabaseError, IntegrityError, transaction
 from django.db.models import Count, F, Prefetch, Q
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
+from django.utils.http import parse_http_date_safe
+from google.auth import crypt as google_crypt
 from google.auth.exceptions import GoogleAuthError, TransportError
 from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2 import id_token
 from requests import Session
+from requests.structures import CaseInsensitiveDict
+from requests.utils import parse_dict_header, parse_list_header
 from rest_framework import serializers, status
 from rest_framework.authtoken.models import Token
 from rest_framework.exceptions import (
@@ -101,6 +108,81 @@ class LoginGoogleIndisponivel(APIException):
     default_code = "login_google_indisponivel"
 
 
+GOOGLE_CERTIFICADOS_URL = "https://www.googleapis.com/oauth2/v1/certs"
+# Somente certificados públicos; estado e limite de rede independentes por processo.
+_cache_certificados_google = None
+_trava_certificados_google = Lock()
+
+
+def _validade_cache_google(headers, *, agora, duracao):
+    headers = CaseInsensitiveDict(headers)
+    politica = headers.get("Cache-Control", "")
+    controle = {
+        chave.lower(): valor
+        for chave, valor in parse_dict_header(politica).items()
+    }
+    if len(parse_list_header(politica)) != len(controle) or "no-store" in controle or "no-cache" in controle:
+        return 0
+    idade = headers.get("Age", "0")
+    if not idade.isascii() or not idade.isdigit() or len(idade) > 10:
+        return 0
+    data = parse_http_date_safe(headers["Date"]) if "Date" in headers else None
+    if "Date" in headers and data is None:
+        return 0
+    if "max-age" in controle:
+        prazo = controle["max-age"]
+        if prazo is None or not prazo.isascii() or not prazo.isdigit() or len(prazo) > 10:
+            return 0
+        prazo = int(prazo)
+    else:
+        vencimento = parse_http_date_safe(headers.get("Expires", ""))
+        if vencimento is None:
+            return 0
+        prazo = vencimento - (data if data is not None else agora)
+    idade = max(int(idade), max(0, agora - data) if data is not None else 0)
+    return max(0, prazo - idade - duracao)
+
+
+def _requisitar_certificados_google(url, method="GET"):
+    global _cache_certificados_google
+    if url != GOOGLE_CERTIFICADOS_URL or method != "GET":
+        raise TransportError("Consulta de certificados inválida.")
+    entrada = _cache_certificados_google
+    if entrada is not None and monotonic() < entrada[1]:
+        return SimpleNamespace(status=200, data=entrada[0])
+    if not _trava_certificados_google.acquire(blocking=False):
+        raise TransportError("Consulta de certificados em andamento.")
+    try:
+        entrada = _cache_certificados_google
+        if entrada is not None and monotonic() < entrada[1]:
+            return SimpleNamespace(status=200, data=entrada[0])
+        _cache_certificados_google = None
+        inicio = monotonic()
+        with Session() as sessao:
+            resposta = GoogleRequest(session=sessao)(
+                url, method="GET", timeout=5, allow_redirects=False,
+            )
+        if resposta.status != 200:
+            raise TransportError("Certificados indisponíveis.")
+        dados = bytes(resposta.data)
+        certificados = json.loads(dados.decode("utf-8"))
+        if not isinstance(certificados, dict) or not certificados:
+            raise ValueError
+        for chave, certificado in certificados.items():
+            if not isinstance(chave, str) or not chave or not isinstance(certificado, str):
+                raise ValueError
+            google_crypt.RSAVerifier.from_string(certificado)
+        fim = monotonic()
+        prazo = _validade_cache_google(resposta.headers, agora=time(), duracao=fim - inicio)
+        if prazo > 0:
+            _cache_certificados_google = (dados, fim + prazo)
+        return SimpleNamespace(status=200, data=dados)
+    except (ValueError, TypeError, UnicodeError, RecursionError):
+        raise TransportError("Resposta de certificados inválida.") from None
+    finally:
+        _trava_certificados_google.release()
+
+
 class LoginGoogleView(APIView):
     permission_classes = (AllowAny,)
     authentication_classes = ()
@@ -119,12 +201,11 @@ class LoginGoogleView(APIView):
             raise LoginGoogleIndisponivel()
 
         try:
-            with Session() as sessao:
-                perfil = id_token.verify_oauth2_token(
-                    validacao.validated_data["credential"],
-                    partial(GoogleRequest(session=sessao), timeout=5),
-                    audience=settings.GOOGLE_CLIENT_ID,
-                )
+            perfil = id_token.verify_oauth2_token(
+                validacao.validated_data["credential"],
+                _requisitar_certificados_google,
+                audience=settings.GOOGLE_CLIENT_ID,
+            )
         except TransportError:
             raise LoginGoogleIndisponivel() from None
         except (ValueError, GoogleAuthError, KeyError, TypeError):

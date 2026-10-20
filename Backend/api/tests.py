@@ -1,11 +1,12 @@
 import asyncio
 import json
 import uuid
-from base64 import b64encode
+from base64 import b64encode, urlsafe_b64encode
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from threading import Barrier
+from email.utils import formatdate
+from threading import Barrier, Event, Lock
 from time import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -34,6 +35,28 @@ from .views import (
     MensagemThrottle, enviar_mensagem, grupo_usuario, publicar_evento,
     registrar_resposta_assistente,
 )
+
+
+def credencial_google_teste(cabecalho=None, perfil=None, *, tamanho=None):
+    def codificar(valor):
+        return urlsafe_b64encode(
+            json.dumps(valor, separators=(",", ":")).encode("utf-8")
+        ).decode("ascii").rstrip("=")
+
+    cabecalho = {"alg": "RS256", "kid": "chave-teste"} if cabecalho is None else cabecalho
+    perfil = {"sub": "123456789012345678901"} if perfil is None else perfil
+    inicio = f"{codificar(cabecalho)}.{codificar(perfil)}."
+    if tamanho is None:
+        return inicio + urlsafe_b64encode(b"assinatura-teste").decode("ascii").rstrip("=")
+    for preenchimento in range(4):
+        inicio = f"{codificar(cabecalho)}.{codificar({**perfil, 'padding': 'x' * preenchimento})}."
+        restante = tamanho - len(inicio)
+        if restante > 0 and restante % 4 != 1:
+            return inicio + "A" * restante
+    raise ValueError("Nao foi possivel construir a credencial de teste.")
+
+
+CREDENCIAL_GOOGLE_TESTE = credencial_google_teste()
 
 
 @override_settings(PASSWORD_HASHERS=["django.contrib.auth.hashers.MD5PasswordHasher"])
@@ -223,7 +246,7 @@ class LoginGoogleTests(APITestCase):
 
     def login(self, dados=None, **headers):
         return self.client.post(
-            "/login/google/", {"credential": "id-token-google"} if dados is None else dados,
+            "/login/google/", {"credential": CREDENCIAL_GOOGLE_TESTE} if dados is None else dados,
             format="json", REMOTE_ADDR="192.0.2.10", **headers,
         )
 
@@ -254,7 +277,7 @@ class LoginGoogleTests(APITestCase):
             },
         })
         argumentos, opcoes = self.verificador.call_args
-        self.assertEqual(argumentos[0], "id-token-google")
+        self.assertEqual(argumentos[0], CREDENCIAL_GOOGLE_TESTE)
         audience = opcoes.get("audience", argumentos[2] if len(argumentos) > 2 else None)
         self.assertEqual(audience, "cliente-google.apps.googleusercontent.com")
         self.assertNotIn("sessionid", resposta.cookies)
@@ -396,7 +419,9 @@ class LoginGoogleTests(APITestCase):
             "sub": "s" * 255,
             "email": f"{'a' * 64}@{'b' * 63}.{'c' * 63}.{'d' * 61}",
         })
-        resposta = self.login({"credential": "x" * 8192})
+        credential = credencial_google_teste(tamanho=8192)
+        self.assertEqual(len(credential), 8192)
+        resposta = self.login({"credential": credential})
         self.assertEqual(resposta.status_code, 200)
         self.assertEqual(ContaGoogle.objects.get().sub, self.claims["sub"])
         self.assertEqual(get_user_model().objects.get().email, self.claims["email"])
@@ -406,15 +431,41 @@ class LoginGoogleTests(APITestCase):
             {}, {"credential": None}, {"credential": ""}, {"credential": " "},
             {"credential": []}, {"credential": {}}, {"credential": True},
             {"credential": 123}, {"credential": 1.5}, {"credential": "x" * 8193},
-            [], "id-token-google",
+            [], CREDENCIAL_GOOGLE_TESTE,
         ):
             with self.subTest(dados=str(dados)[:80]):
                 self.assertEqual(self.login(dados).status_code, 400)
         self.verificador.assert_not_called()
         self.verificar_sem_contas()
 
+    def test_jwt_malformado_retorna_400_sem_verificador_ou_rede(self):
+        cabecalho, corpo, assinatura = CREDENCIAL_GOOGLE_TESTE.split(".")
+        invalidas = (
+            "texto-invalido", "a.b", "a.b.c.d", f"{cabecalho}..{assinatura}",
+            f".{corpo}.{assinatura}", f"{cabecalho}.{corpo}.",
+            f"{cabecalho}.{corpo}.A", f"{cabecalho}.{corpo}.{assinatura}=",
+            f"{cabecalho}.{corpo}.a+b/", f" {CREDENCIAL_GOOGLE_TESTE}",
+            f"{cabecalho}.{corpo}.ç", f"_w.{corpo}.{assinatura}",
+            f"e30.e3s.{assinatura}",
+            credencial_google_teste(cabecalho=[]),
+            credencial_google_teste(perfil=[]),
+            credencial_google_teste(cabecalho={"alg": "none", "kid": "chave-teste"}),
+            credencial_google_teste(cabecalho={"alg": "HS256", "kid": "chave-teste"}),
+            credencial_google_teste(cabecalho={"alg": "RS256"}),
+            credencial_google_teste(cabecalho={"alg": "RS256", "kid": ""}),
+            credencial_google_teste(cabecalho={"alg": "RS256", "kid": []}),
+        )
+        with patch("api.views.GoogleRequest") as transporte:
+            for credential in invalidas:
+                with self.subTest(credential=credential[:80]):
+                    cache.clear()
+                    self.assertEqual(self.login({"credential": credential}).status_code, 400)
+            transporte.assert_not_called()
+        self.verificador.assert_not_called()
+        self.verificar_sem_contas()
+
     def test_aceita_apenas_post_json(self):
-        formulario = self.client.post("/login/google/", {"credential": "id-token-google"})
+        formulario = self.client.post("/login/google/", {"credential": CREDENCIAL_GOOGLE_TESTE})
         self.assertEqual(formulario.status_code, 415)
         self.assertEqual(self.client.get("/login/google/").status_code, 405)
         invalido = self.client.post(
@@ -456,7 +507,7 @@ class LoginGoogleTests(APITestCase):
         self.assertGreater(int(limitada["Retry-After"]), 0)
         self.verificador.assert_not_called()
         outro_ip = self.client.post(
-            "/login/google/", {"credential": "id-token-google"},
+            "/login/google/", {"credential": CREDENCIAL_GOOGLE_TESTE},
             format="json", REMOTE_ADDR="192.0.2.11",
         )
         self.assertEqual(outro_ip.status_code, 200)
@@ -495,6 +546,9 @@ class LoginGoogleTokensAssinadosTests(APITestCase):
 
     def setUp(self):
         cache.clear()
+        estado = patch("api.views._cache_certificados_google", None)
+        estado.start()
+        self.addCleanup(estado.stop)
         agora = int(time())
         self.claims = {
             "sub": "sub-token-assinado", "email": "assinado@example.com",
@@ -510,15 +564,17 @@ class LoginGoogleTokensAssinadosTests(APITestCase):
 
     def login(self, credential):
         resposta_certificados = SimpleNamespace(
-            status=200, data=json.dumps(self.certificados).encode("utf-8")
+            status=200, data=json.dumps(self.certificados).encode("utf-8"),
+            headers={"Cache-Control": "public, max-age=600"},
         )
         with patch("api.views.GoogleRequest") as transporte:
             transporte.return_value.return_value = resposta_certificados
             resposta = self.client.post(
                 "/login/google/", {"credential": credential}, format="json"
             )
-            transporte.return_value.assert_called_once()
-            self.assertEqual(transporte.return_value.call_args.kwargs["timeout"], 5)
+            for chamada in transporte.return_value.call_args_list:
+                self.assertEqual(chamada.kwargs["timeout"], 5)
+                self.assertFalse(chamada.kwargs["allow_redirects"])
         return resposta
 
     def test_token_rsa_valido_passa_pelo_verificador_real_sem_acesso_a_rede(self):
@@ -544,6 +600,254 @@ class LoginGoogleTokensAssinadosTests(APITestCase):
                 self.assertFalse(ContaGoogle.objects.exists())
                 self.assertFalse(Token.objects.exists())
 
+    def test_cache_de_certificados_nao_dispensa_validacao_criptografica(self):
+        certificados = SimpleNamespace(
+            status=200, data=json.dumps(self.certificados).encode("utf-8"),
+            headers={"Cache-Control": "max-age=600"},
+        )
+        cabecalho, corpo, assinatura = self.token().split(".")
+        adulterada = ("A" if assinatura[0] != "A" else "B") + assinatura[1:]
+        desconhecida = google_jwt.encode(
+            self.assinador, self.claims, key_id="chave-desconhecida",
+            header={"jku": "https://atacante.example/certs", "x5u": "http://127.0.0.1/"},
+        ).decode("ascii")
+        credenciais = (
+            self.token(), f"{cabecalho}.{corpo}.{adulterada}",
+            self.token({"aud": "outro-cliente"}),
+            self.token({"iss": "https://atacante.example"}),
+            self.token({"exp": int(time()) - 1}), desconhecida, desconhecida,
+        )
+        with patch("api.views.GoogleRequest") as transporte:
+            transporte.return_value.return_value = certificados
+            for indice, credential in enumerate(credenciais):
+                with self.subTest(indice=indice):
+                    resposta = self.client.post(
+                        "/login/google/", {"credential": credential}, format="json",
+                    )
+                    self.assertEqual(resposta.status_code, 200 if indice == 0 else 401)
+            transporte.return_value.assert_called_once_with(
+                "https://www.googleapis.com/oauth2/v1/certs", method="GET", timeout=5,
+                allow_redirects=False,
+            )
+        self.assertEqual(get_user_model().objects.count(), 1)
+        self.assertEqual(ContaGoogle.objects.count(), 1)
+        self.assertEqual(Token.objects.count(), 1)
+
+
+@override_settings(**CONFIG_TESTES, GOOGLE_CLIENT_ID="cliente-google.apps.googleusercontent.com")
+class CertificadosGoogleTests(APITestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        chave = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        cls.assinador = google_crypt.RSASigner(chave, key_id="chave-teste")
+        cls.certificados = {"chave-teste": chave.public_key().public_bytes(
+            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).decode("ascii")}
+
+    def setUp(self):
+        cache.clear()
+        self.agora = 1700000000
+        self.resposta = SimpleNamespace(
+            status=200, data=json.dumps(self.certificados).encode("utf-8"),
+            headers={"Cache-Control": "max-age=600", "Date": formatdate(self.agora, usegmt=True)},
+        )
+        for alvo, valor in (
+            ("api.views._cache_certificados_google", None),
+            ("api.views._trava_certificados_google", Lock()),
+        ):
+            estado = patch(alvo, valor)
+            estado.start()
+            self.addCleanup(estado.stop)
+        transporte = patch("api.views.GoogleRequest")
+        self.transporte = transporte.start()
+        self.transporte.return_value.return_value = self.resposta
+        self.addCleanup(transporte.stop)
+        relogio = patch("api.views.monotonic", return_value=100)
+        self.relogio = relogio.start()
+        self.addCleanup(relogio.stop)
+        calendario = patch("api.views.time", return_value=self.agora)
+        calendario.start()
+        self.addCleanup(calendario.stop)
+
+    def requisitar(self, url="https://www.googleapis.com/oauth2/v1/certs", method="GET"):
+        from .views import _requisitar_certificados_google
+        return _requisitar_certificados_google(url, method=method)
+
+    def login_real(self):
+        agora = int(time())
+        credential = google_jwt.encode(self.assinador, {
+            "sub": "sub-cache-certificados", "email": "cache@example.com", "email_verified": True,
+            "iss": "https://accounts.google.com", "aud": "cliente-google.apps.googleusercontent.com",
+            "iat": agora - 30, "exp": agora + 3600,
+        }).decode("ascii")
+        return self.client.post("/login/google/", {"credential": credential}, format="json")
+
+    def test_validade_respeita_max_age_age_date_expires_e_duracao_da_consulta(self):
+        from .views import _validade_cache_google
+
+        casos = (
+            ({"Cache-Control": "max-age=600"}, 598),
+            ({"cache-control": "public, max-age=100", "age": "20"}, 78),
+            ({"Cache-Control": "max-age=600", "Age": "120",
+              "Date": formatdate(self.agora - 50, usegmt=True)}, 478),
+            ({"Cache-Control": "max-age=600", "Age": "20",
+              "Date": formatdate(self.agora - 100, usegmt=True)}, 498),
+            ({"Expires": formatdate(self.agora + 600, usegmt=True),
+              "Date": formatdate(self.agora, usegmt=True), "Age": "30"}, 568),
+            ({"Expires": formatdate(self.agora + 600, usegmt=True)}, 598),
+            ({"Cache-Control": "max-age=10", "Age": "20"}, 0),
+            ({"Cache-Control": "max-age=600", "Date": formatdate(self.agora + 60, usegmt=True)}, 598),
+        )
+        for headers, esperado in casos:
+            with self.subTest(headers=headers):
+                self.assertEqual(
+                    _validade_cache_google(headers, agora=self.agora, duracao=2), esperado,
+                )
+
+    def test_cabecalhos_sem_validade_ou_invalidos_nao_autorizam_cache(self):
+        from .views import _validade_cache_google
+
+        casos = (
+            {}, {"Cache-Control": "public"}, {"Cache-Control": "no-store, max-age=600"},
+            {"Cache-Control": "no-cache, max-age=600"}, {"Cache-Control": "max-age=invalido"},
+            {"Cache-Control": "max-age=-1"}, {"Cache-Control": "max-age=600", "Age": "invalido"},
+            {"Cache-Control": "max-age=600", "Age": "-1"},
+            {"Cache-Control": "max-age=600", "Date": "invalido"},
+            {"Cache-Control": "max-age=600, max-age=30"},
+            {"Cache-Control": "max-age=600, MAX-AGE=30"},
+            {"Expires": "invalido"}, {"Expires": formatdate(self.agora - 1, usegmt=True)},
+        )
+        for headers in casos:
+            with self.subTest(headers=headers):
+                self.assertEqual(_validade_cache_google(headers, agora=self.agora, duracao=2), 0)
+
+    def test_cache_hit_nao_consulta_rede_e_vencimento_exato_atualiza(self):
+        primeira = self.requisitar()
+        self.assertEqual(json.loads(primeira.data), self.certificados)
+        self.relogio.return_value = 699.999
+        self.assertEqual(self.requisitar().data, primeira.data)
+        self.transporte.return_value.assert_called_once_with(
+            "https://www.googleapis.com/oauth2/v1/certs", method="GET", timeout=5,
+            allow_redirects=False,
+        )
+        self.relogio.return_value = 700
+        self.assertEqual(self.requisitar().status, 200)
+        self.assertEqual(self.transporte.return_value.call_count, 2)
+
+    def test_cache_valido_continua_disponivel_com_trava_ocupada(self):
+        from . import views
+
+        primeira = self.requisitar()
+        with views._trava_certificados_google:
+            self.assertEqual(self.requisitar().data, primeira.data)
+        self.assertEqual(self.transporte.return_value.call_count, 1)
+
+    def test_sem_cache_explicito_cada_chamada_reconsulta_google(self):
+        for headers in ({}, {"Cache-Control": "no-store, max-age=600"},
+                        {"Cache-Control": "no-cache, max-age=600"}):
+            with self.subTest(headers=headers), patch("api.views._cache_certificados_google", None):
+                self.resposta.headers = headers
+                self.transporte.return_value.reset_mock()
+                self.requisitar()
+                self.requisitar()
+                self.assertEqual(self.transporte.return_value.call_count, 2)
+
+    def test_url_ou_metodo_alternativo_nao_contornam_endpoint_fixo_nem_cache(self):
+        self.requisitar()
+        for url, metodo in (
+            ("http://127.0.0.1/admin", "GET"),
+            ("https://www.googleapis.com/oauth2/v1/certs?outra=1", "GET"),
+            ("https://www.googleapis.com/oauth2/v1/certs", "POST"),
+        ):
+            with self.subTest(url=url, metodo=metodo), self.assertRaises(TransportError):
+                self.requisitar(url, metodo)
+        self.assertEqual(self.transporte.return_value.call_count, 1)
+
+    def test_falhas_de_transporte_e_respostas_invalidas_retornam_503_sem_contas(self):
+        corpos = (
+            (500, self.resposta.data), (302, self.resposta.data), (200, b"nao-json"),
+            (200, b"[]"), (200, b"{}"), (200, b'{"kid": 123}'),
+            (200, b'{"kid": "certificado-invalido"}'),
+        )
+        for status, corpo in corpos:
+            with self.subTest(status=status, corpo=corpo[:40]):
+                self.resposta.status, self.resposta.data = status, corpo
+                resposta = self.login_real()
+                self.assertEqual(resposta.status_code, 503)
+                self.assertNotIn("certificado-invalido", str(resposta.json()))
+                self.assertEqual(get_user_model().objects.count(), 0)
+        self.transporte.return_value.side_effect = TransportError("detalhe interno")
+        resposta = self.login_real()
+        self.assertEqual(resposta.status_code, 503)
+        self.assertNotIn("detalhe interno", str(resposta.json()))
+        self.assertFalse(ContaGoogle.objects.exists())
+        self.assertFalse(Token.objects.exists())
+        self.transporte.return_value.side_effect = None
+        self.resposta.status = 200
+        self.resposta.data = json.dumps(self.certificados).encode("utf-8")
+        self.assertEqual(self.login_real().status_code, 200)
+
+    def test_cache_vencido_nao_e_usado_quando_google_falha_e_novo_login_recupera(self):
+        self.assertEqual(self.login_real().status_code, 200)
+        self.transporte.return_value.side_effect = TransportError("detalhe interno")
+        self.relogio.return_value = 699
+        self.assertEqual(self.login_real().status_code, 200)
+        self.relogio.return_value = 700
+        resposta = self.login_real()
+        self.assertEqual(resposta.status_code, 503)
+        self.assertNotIn("detalhe interno", str(resposta.json()))
+        self.transporte.return_value.side_effect = None
+        self.assertEqual(self.login_real().status_code, 200)
+        self.assertEqual(get_user_model().objects.count(), 1)
+        self.assertEqual(ContaGoogle.objects.count(), 1)
+        self.assertEqual(Token.objects.count(), 1)
+
+    def test_refresh_concorrente_faz_uma_consulta_e_rejeita_excesso_sem_esperar(self):
+        iniciou = Event()
+        liberar = Event()
+
+        def consultar(*args, **kwargs):
+            iniciou.set()
+            if not liberar.wait(timeout=5):
+                raise AssertionError("Consulta de teste nao foi liberada.")
+            return self.resposta
+
+        self.transporte.return_value.side_effect = consultar
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            primeira = executor.submit(self.requisitar)
+            self.assertTrue(iniciou.wait(timeout=2))
+            try:
+                excesso = executor.submit(self.requisitar)
+                with self.assertRaises(TransportError):
+                    excesso.result(timeout=1)
+                self.assertEqual(self.transporte.return_value.call_count, 1)
+            finally:
+                liberar.set()
+            self.assertEqual(primeira.result(timeout=2).status, 200)
+        self.assertEqual(self.requisitar().status, 200)
+        self.assertEqual(self.transporte.return_value.call_count, 1)
+
+    def test_refresh_ocupado_retorna_503_sem_conta_e_recupera_apos_liberar(self):
+        from . import views
+
+        with views._trava_certificados_google:
+            resposta = self.login_real()
+        self.assertEqual(resposta.status_code, 503)
+        self.transporte.assert_not_called()
+        self.assertFalse(get_user_model().objects.exists())
+        self.assertFalse(ContaGoogle.objects.exists())
+        self.assertFalse(Token.objects.exists())
+        self.assertEqual(self.login_real().status_code, 200)
+
+    def test_falha_de_consulta_libera_trava_para_tentativa_seguinte(self):
+        self.transporte.return_value.side_effect = TransportError("detalhe interno")
+        with self.assertRaises(TransportError):
+            self.requisitar()
+        self.transporte.return_value.side_effect = None
+        self.assertEqual(self.requisitar().status, 200)
+        self.assertEqual(self.transporte.return_value.call_count, 2)
+
 
 @override_settings(**CONFIG_TESTES, GOOGLE_CLIENT_ID="cliente-google.apps.googleusercontent.com")
 class LoginGoogleConcorrenciaTests(TransactionTestCase):
@@ -568,7 +872,7 @@ class LoginGoogleConcorrenciaTests(TransactionTestCase):
                 connection.ensure_connection()
                 conexao = id(connection.connection)
                 resposta = APIClient().post(
-                    "/login/google/", {"credential": "id-token-google"},
+                    "/login/google/", {"credential": CREDENCIAL_GOOGLE_TESTE},
                     format="json", REMOTE_ADDR="192.0.2.20",
                 )
                 return conexao, resposta.status_code, resposta.json()
@@ -583,7 +887,7 @@ class LoginGoogleConcorrenciaTests(TransactionTestCase):
         self.assertTrue(all(status in (200, 503) for _, status, _ in respostas), respostas)
         with patch("api.views.id_token.verify_oauth2_token", return_value=claims):
             repetida = self.client.post(
-                "/login/google/", {"credential": "id-token-google"}, format="json"
+                "/login/google/", {"credential": CREDENCIAL_GOOGLE_TESTE}, format="json"
             )
         self.assertEqual(repetida.status_code, 200)
         self.assertEqual(get_user_model().objects.count(), 1)
@@ -631,7 +935,7 @@ class TokenExpiracaoConcorrenciaTests(TransactionTestCase):
                     dados = {"username": self.usuario.username, "password": self.password}
                 else:
                     caminho = "/login/google/"
-                    dados = {"credential": "id-token-google"}
+                    dados = {"credential": CREDENCIAL_GOOGLE_TESTE}
                 resposta = APIClient().post(
                     caminho, dados, format="json", REMOTE_ADDR="192.0.2.30",
                 )

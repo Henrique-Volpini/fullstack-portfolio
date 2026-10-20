@@ -39,6 +39,7 @@
   --swatch-noite: linear-gradient(135deg, #07111f 50%, #7aafc8 50%);
   --swatch-cianotipo: linear-gradient(135deg, #0a3a8c 50%, #ffd23f 50%);
   --swatch-prancheta: linear-gradient(135deg, #f4f0e6 50%, #c4340b 50%);
+  --swatch-anil: linear-gradient(135deg, #110f22 50%, #b3a1f2 50%);
 }
 
 /* Cianótipo: o azul cobalto das plantas copiadas, com linhas brancas e marcação em amarelo. */
@@ -115,4 +116,42 @@
   --color-backdrop: rgba(22, 33, 44, 0.55);
   --color-shadow: rgba(40, 32, 14, 0.22);
   --color-input-scheme: light;
+}
+
+/* Anil: o índigo das tintas de tecido, com traços em lavanda sobre fundo quase preto. */
+:root[data-theme="anil"] {
+  --color-background: #110f22;
+  --color-background-secondary: #0d0b1b;
+  --color-background-elevated: #181533;
+  --color-background-subtle: rgba(33, 28, 70, 0.72);
+  --color-background-transparent: rgba(17, 15, 34, 0);
+
+  --color-text-primary: #f3f0fb;
+  --color-text-secondary: #cdc8e6;
+  --color-text-muted: #a39dc6;
+  --color-text-on-accent: #150f2e;
+
+  --color-accent: #b3a1f2;
+  --color-accent-strong: #cfc2ff;
+  --color-accent-muted: rgba(179, 161, 242, 0.14);
+
+  --color-blueprint-grid-minor: rgba(160, 140, 230, 0.03);
+  --color-blueprint-grid-major: rgba(160, 140, 230, 0.06);
+  --color-blueprint-line: rgba(179, 161, 242, 0.6);
+  --color-blueprint-line-muted: rgba(179, 161, 242, 0.24);
+
+  --color-border: rgba(190, 175, 240, 0.2);
+  --color-border-strong: rgba(190, 175, 240, 0.42);
+  --color-button-primary: #b3a1f2;
+  --color-button-primary-hover: #cfc2ff;
+  --color-button-secondary: rgba(24, 21, 51, 0.45);
+  --color-button-secondary-hover: rgba(179, 161, 242, 0.1);
+  --color-live: #4cc38a;
+  --color-focus: #cfc2ff;
+  --color-error: #f0b5ab;
+
+  --color-header-scrolled: rgba(17, 15, 34, 0.88);
+  --color-backdrop: rgba(8, 6, 20, 0.8);
+  --color-shadow: rgba(6, 4, 18, 0.55);
+  --color-input-scheme: dark;
 }
