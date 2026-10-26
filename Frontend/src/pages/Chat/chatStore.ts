@@ -137,6 +137,7 @@ export class ChatStore {
   private listInFlight = new Set<string>();
   private fullSyncQueued = false;
   private opening = new Map<Destinatario, Promise<string | null>>();
+  private deliveries = new Map<string, Promise<void>>();
   private viewing: string | null = null;
   private filter: Filtro = "todas";
   private syncing = false;
@@ -186,6 +187,7 @@ export class ChatStore {
     this.pendingReads.clear();
     this.listInFlight.clear();
     this.opening.clear();
+    this.deliveries.clear();
     this.syncing = false;
     this.fullSyncQueued = false;
     this.attempts = 0;
@@ -337,7 +339,7 @@ export class ChatStore {
     };
 
     this.updateThread(conversationId, (thread) => ({ ...thread, messages: [...thread.messages, pending] }));
-    void this.deliver(pending);
+    this.enqueue(pending);
   }
 
   retry(conversationId: string, clientId: string) {
@@ -348,7 +350,7 @@ export class ChatStore {
 
     const retrying: UiMessage = { ...message, status: "enviando", erro: undefined };
     this.replacePending(conversationId, clientId, retrying);
-    void this.deliver(retrying);
+    this.enqueue(retrying);
   }
 
   discard(conversationId: string, clientId: string) {
@@ -490,6 +492,30 @@ export class ChatStore {
     }
   }
 
+  // O backend responde uma pergunta por vez em cada conversa com o Assistente: um envio simultâneo
+  // recebe 503. A fila preserva a ordem e deixa a resposta anterior entrar no contexto da próxima.
+  private enqueue(message: UiMessage) {
+    if (!this.answersAutomatically(message.conversa_id)) {
+      void this.deliver(message);
+      return;
+    }
+
+    const next = (this.deliveries.get(message.conversa_id) ?? Promise.resolve()).then(() => this.deliver(message));
+    this.deliveries.set(message.conversa_id, next);
+    void next.finally(() => {
+      if (this.deliveries.get(message.conversa_id) === next) this.deliveries.delete(message.conversa_id);
+    });
+  }
+
+  private answersAutomatically(conversationId: string): boolean {
+    const { profile, conversations } = this.state;
+    return (
+      !!profile?.assistente_ia_ativo &&
+      !profile.operador &&
+      conversations[conversationId]?.destinatario === "assistente"
+    );
+  }
+
   private async deliver(message: UiMessage) {
     const signal = this.abort?.signal;
     if (!signal) return;
@@ -503,6 +529,10 @@ export class ChatStore {
         signal,
       );
       this.receive(sent);
+      // A resposta já está gravada quando o envio retorna; buscá-la agora evita depender do WebSocket.
+      if (this.answersAutomatically(message.conversa_id)) {
+        await this.catchUp(message.conversa_id, signal).catch((error) => this.handleFailure(error, signal));
+      }
     } catch (error) {
       if (this.handleFailure(error, signal)) return;
       this.replacePending(message.conversa_id, message.id_cliente, {

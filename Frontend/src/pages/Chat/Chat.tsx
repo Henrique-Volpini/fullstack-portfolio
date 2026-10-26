@@ -284,10 +284,12 @@ function Composer({
 
 function MessageRow({
   row,
+  awaitingAssistant,
   onRetry,
   onDiscard,
 }: {
   row: Extract<Row, { kind: "message" }>;
+  awaitingAssistant: boolean;
   onRetry: (clientId: string) => void;
   onDiscard: (clientId: string) => void;
 }) {
@@ -303,7 +305,7 @@ function MessageRow({
     >
       {first && (
         <div className="chat-meta">
-          {!mine && <span>{message.remetente.nome}</span>}
+          {(!mine || message.origem === "assistente") && <span>{message.remetente.nome}</span>}
           <time dateTime={message.criada_em}>{timeFormat.format(new Date(message.criada_em))}</time>
         </div>
       )}
@@ -312,7 +314,7 @@ function MessageRow({
       </div>
       {message.status === "enviando" && (
         <span className="chat-state" role="status">
-          Enviando…
+          {awaitingAssistant ? "Assistente respondendo…" : "Enviando…"}
         </span>
       )}
       {message.status === "falhou" && (
@@ -373,9 +375,11 @@ function ThreadView({
   const lastKey = lastRow?.key;
   const firstId = messages?.[0]?.id;
   const lastIsOwn = lastRow?.kind === "message" && lastRow.mine;
+  const lastStatus = lastRow?.kind === "message" ? lastRow.message.status : undefined;
   const ready = thread?.phase === "ready" && !!conversationId;
-  const assistantNote =
-    !operator && conversation?.destinatario === "assistente" && !profile.assistente_ia_ativo;
+  const withAssistant = !operator && conversation?.destinatario === "assistente";
+  const assistantNote = withAssistant && !profile.assistente_ia_ativo;
+  const awaitingAssistant = withAssistant && profile.assistente_ia_ativo;
 
   useEffect(() => {
     const timer = window.setTimeout(() => setIntro(false), 1000);
@@ -385,7 +389,7 @@ function ThreadView({
   useLayoutEffect(() => {
     const element = log.current;
     if (element && (stick.current || lastIsOwn)) element.scrollTop = element.scrollHeight;
-  }, [lastKey, lastIsOwn, thread?.phase]);
+  }, [lastKey, lastIsOwn, lastStatus, thread?.phase]);
 
   useLayoutEffect(() => {
     const element = log.current;
@@ -494,6 +498,7 @@ function ThreadView({
             <MessageRow
               key={row.key}
               row={row}
+              awaitingAssistant={awaitingAssistant}
               onRetry={(clientId) => conversationId && store.retry(conversationId, clientId)}
               onDiscard={(clientId) => conversationId && store.discard(conversationId, clientId)}
             />
@@ -575,7 +580,7 @@ function ConversationList({
                 <time dateTime={item.atualizada_em}>{listTime(item.atualizada_em)}</time>
               </span>
               <span className="chat-list-preview">
-                {fromMe ? "Você: " : ""}
+                {fromMe ? (last?.origem === "assistente" ? "Assistente: " : "Você: ") : ""}
                 {last?.conteudo}
               </span>
               <span className="chat-list-tags">
