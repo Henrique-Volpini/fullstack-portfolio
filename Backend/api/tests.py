@@ -1,6 +1,8 @@
 import asyncio
+import bz2
 import json
 import uuid
+import zlib
 from base64 import b64encode, urlsafe_b64encode
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -29,6 +31,8 @@ from google.auth import crypt as google_crypt, jwt as google_jwt
 from google.auth.exceptions import GoogleAuthError, TransportError
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient, APITestCase
+from twisted.internet.testing import StringTransport
+from twisted.web.http import HTTPChannel, Request
 
 from .models import ContaGoogle, Conversa, Mensagem
 from .views import (
@@ -226,6 +230,25 @@ CONFIG_TESTES = {
     "CACHES": {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}},
     "CHANNEL_LAYERS": {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}},
 }
+
+
+class ServidorHTTPTests(SimpleTestCase):
+    def test_rejeita_cr_e_lf_isolados_em_cabecalhos_sem_processar_requisicao(self):
+        for separador in (b"\r", b"\n"):
+            with self.subTest(separador=separador):
+                canal = HTTPChannel()
+                canal.timeOut = None
+                transporte = StringTransport()
+                canal.makeConnection(transporte)
+                requisicao = (
+                    b"POST /login/ HTTP/1.1\r\nHost: testserver\r\n"
+                    b"X-Teste: valor" + separador + b"Content-Length: 2\r\n\r\n{}"
+                )
+                with patch.object(Request, "process") as processar:
+                    canal.dataReceived(requisicao)
+                self.assertTrue(transporte.disconnecting)
+                self.assertTrue(transporte.value().startswith(b"HTTP/1.1 400 Bad Request\r\n"))
+                processar.assert_not_called()
 
 
 @override_settings(GEMINI_API_KEY="chave-privada-teste", GEMINI_MODEL="gemini-3.5-flash-lite")
@@ -630,6 +653,25 @@ class LoginGoogleTests(APITestCase):
             "/login/google/", '{"credential":', content_type="application/json"
         )
         self.assertEqual(invalido.status_code, 400)
+        self.verificador.assert_not_called()
+        self.verificar_sem_contas()
+
+    @override_settings(DATA_UPLOAD_MAX_MEMORY_SIZE=1024)
+    def test_rejeita_charset_de_compressao_antes_de_expandir_json(self):
+        corpo = json.dumps({
+            "credential": CREDENCIAL_GOOGLE_TESTE,
+            "padding": "x" * (64 * 1024),
+        }).encode("utf-8")
+        for charset, comprimir in (("bz2_codec", bz2.compress), ("zlib_codec", zlib.compress)):
+            with self.subTest(charset=charset):
+                comprimido = comprimir(corpo)
+                self.assertLess(len(comprimido), 1024)
+                resposta = self.client.post(
+                    "/login/google/", comprimido,
+                    content_type=f"application/json; charset={charset}",
+                )
+                self.assertEqual(resposta.status_code, 400)
+                self.assertIn("charset", resposta.json()["detail"].lower())
         self.verificador.assert_not_called()
         self.verificar_sem_contas()
 
