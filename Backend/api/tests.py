@@ -23,7 +23,7 @@ from django.core.management import call_command
 from django.db import (
     IntegrityError, OperationalError, close_old_connections, connection, transaction,
 )
-from django.test import TransactionTestCase, override_settings
+from django.test import SimpleTestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 from google.auth import crypt as google_crypt, jwt as google_jwt
 from google.auth.exceptions import GoogleAuthError, TransportError
@@ -221,10 +221,168 @@ class ProtecaoAutenticacaoTests(APITestCase):
 
 CONFIG_TESTES = {
     "AUTH_TOKEN_TTL_SECONDS": 3600,
+    "GEMINI_API_KEY": "",
     "PASSWORD_HASHERS": ["django.contrib.auth.hashers.MD5PasswordHasher"],
     "CACHES": {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}},
     "CHANNEL_LAYERS": {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}},
 }
+
+
+@override_settings(GEMINI_API_KEY="chave-privada-teste", GEMINI_MODEL="gemini-3.5-flash-lite")
+class GeminiTests(SimpleTestCase):
+    def setUp(self):
+        from . import ia
+
+        self.ia = ia
+        transporte = patch("api.ia.Session")
+        self.transporte = transporte.start()
+        self.addCleanup(transporte.stop)
+        self.sessao = self.transporte.return_value.__enter__.return_value
+        self.resposta = self.sessao.post.return_value
+        self.resposta.status_code = 200
+        self.historico = [{"role": "user", "parts": [{"text": "Quais tecnologias utiliza?"}]}]
+        self.selecao({"topicos": ["stack"]})
+
+    def selecao(self, dados):
+        self.resposta.json.return_value = {
+            "candidates": [{
+                "finishReason": "STOP",
+                "content": {"parts": [{"text": json.dumps(dados)}]},
+            }],
+        }
+
+    def test_resposta_contem_apenas_textos_aprovados_sem_repetir_topicos(self):
+        self.selecao({"topicos": ["stack", "experiencia", "stack"]})
+        resposta = self.ia.gerar_resposta(self.historico)
+        self.assertEqual(
+            resposta,
+            "\n\n".join(self.ia.BASE_PORTFOLIO[topico] for topico in ("stack", "experiencia")),
+        )
+
+    def test_requisicao_usa_schema_historico_limitado_e_chave_somente_no_cabecalho(self):
+        historico = [
+            {"role": "user", "parts": [{"text": f"Pergunta {numero}"}]}
+            for numero in range(self.ia.LIMITE_HISTORICO + 5)
+        ]
+        self.ia.gerar_resposta(historico)
+        self.sessao.post.assert_called_once()
+        argumentos, opcoes = self.sessao.post.call_args
+        self.assertEqual(
+            argumentos[0],
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+        )
+        self.assertEqual(opcoes["headers"], {"x-goog-api-key": "chave-privada-teste"})
+        self.assertNotIn("chave-privada-teste", argumentos[0])
+        self.assertNotIn("chave-privada-teste", json.dumps(opcoes["json"]))
+        self.assertEqual(opcoes["json"]["contents"], historico[-self.ia.LIMITE_HISTORICO:])
+        self.assertEqual(opcoes["timeout"], self.ia.TIMEOUT_GEMINI)
+        self.assertFalse(opcoes["allow_redirects"])
+        configuracao = opcoes["json"]["generationConfig"]
+        self.assertEqual(configuracao["responseMimeType"], "application/json")
+        schema = configuracao["responseSchema"]
+        self.assertEqual(schema["required"], ["topicos"])
+        self.assertEqual(schema["properties"]["topicos"]["maxItems"], 3)
+        self.assertEqual(
+            schema["properties"]["topicos"]["items"]["enum"], list(self.ia.BASE_PORTFOLIO)
+        )
+
+    def test_lista_vazia_de_topicos_retorna_mensagem_fora_do_escopo(self):
+        self.selecao({"topicos": []})
+        self.assertEqual(self.ia.gerar_resposta(self.historico), self.ia.RESPOSTA_FORA_ESCOPO)
+
+    def test_topicos_invalidos_texto_livre_e_campos_extras_nao_sao_publicados(self):
+        selecoes = (
+            {"topicos": ["vida_pessoal"]},
+            {"topicos": ["stack"], "resposta": "Texto livre não autorizado."},
+            {"resposta": "Texto livre não autorizado."},
+            {"topicos": "stack"}, {"topicos": None}, {"topicos": [123]},
+            {"topicos": list(self.ia.BASE_PORTFOLIO)[:4]}, {}, [], None,
+        )
+        for selecao in selecoes:
+            with self.subTest(selecao=selecao):
+                self.selecao(selecao)
+                with self.assertRaises(self.ia.AssistenteIndisponivel):
+                    self.ia.gerar_resposta(self.historico)
+
+    def test_texto_vazio_json_invalido_e_markdown_sao_rejeitados(self):
+        for texto in ("", "  ", "Texto sem JSON.", "{", '```json\n{"topicos":["stack"]}\n```'):
+            with self.subTest(texto=texto):
+                self.resposta.json.return_value = {"candidates": [{
+                    "finishReason": "STOP", "content": {"parts": [{"text": texto}]}},
+                ]}
+                with self.assertRaises(self.ia.AssistenteIndisponivel):
+                    self.ia.gerar_resposta(self.historico)
+
+    def test_resposta_malformada_do_provedor_vira_erro_controlado(self):
+        respostas = (
+            None, [], {}, {"candidates": []}, {"candidates": [{}]},
+            {"candidates": [{"finishReason": "STOP", "content": {"parts": []}}]},
+            {"candidates": [{"finishReason": "STOP", "content": {"parts": [None]}}]},
+        )
+        for resposta in respostas:
+            with self.subTest(resposta=resposta):
+                self.resposta.json.return_value = resposta
+                with self.assertRaises(self.ia.AssistenteIndisponivel):
+                    self.ia.gerar_resposta(self.historico)
+        self.resposta.json.side_effect = ValueError("Corpo inválido com detalhe interno.")
+        with self.assertRaises(self.ia.AssistenteIndisponivel) as erro:
+            self.ia.gerar_resposta(self.historico)
+        self.assertNotIn("detalhe interno", str(erro.exception))
+
+    def test_timeout_e_falha_de_rede_nao_expoem_detalhes(self):
+        from requests.exceptions import ConnectionError, Timeout
+
+        for excecao in (Timeout, ConnectionError):
+            with self.subTest(excecao=excecao):
+                self.sessao.post.side_effect = excecao("detalhe interno chave-privada-teste")
+                with self.assertRaises(self.ia.AssistenteIndisponivel) as erro:
+                    self.ia.gerar_resposta(self.historico)
+                self.assertNotIn("detalhe interno", str(erro.exception))
+                self.assertNotIn("chave-privada-teste", str(erro.exception))
+
+    def test_erros_http_e_redirecionamentos_nao_aceitam_corpo_do_provedor(self):
+        for status in (301, 400, 429, 503):
+            with self.subTest(status=status):
+                self.resposta.status_code = status
+                with self.assertRaises(self.ia.AssistenteIndisponivel):
+                    self.ia.gerar_resposta(self.historico)
+        self.resposta.json.assert_not_called()
+
+    def test_bloqueios_de_seguranca_retornam_fora_do_escopo(self):
+        self.resposta.json.return_value = {"promptFeedback": {"blockReason": "SAFETY"}}
+        self.assertEqual(self.ia.gerar_resposta(self.historico), self.ia.RESPOSTA_FORA_ESCOPO)
+        for motivo in ("SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT"):
+            with self.subTest(motivo=motivo):
+                self.resposta.json.return_value = {"candidates": [{"finishReason": motivo}]}
+                self.assertEqual(self.ia.gerar_resposta(self.historico), self.ia.RESPOSTA_FORA_ESCOPO)
+
+    def test_geracao_truncada_ou_nao_concluida_nao_publica_resposta_parcial(self):
+        for motivo in ("MAX_TOKENS", "OTHER", None):
+            with self.subTest(motivo=motivo):
+                self.selecao({"topicos": ["stack"]})
+                self.resposta.json.return_value["candidates"][0]["finishReason"] = motivo
+                with self.assertRaises(self.ia.AssistenteIndisponivel):
+                    self.ia.gerar_resposta(self.historico)
+
+    def test_partes_de_raciocinio_nao_entram_na_selecao_publica(self):
+        self.resposta.json.return_value = {"candidates": [{
+            "finishReason": "STOP", "content": {"parts": [
+                {"thought": True, "text": "Texto interno não autorizado."},
+                {"text": '{"topicos":'}, {"text": '["stack"]}'},
+            ]},
+        }]}
+        self.assertEqual(self.ia.gerar_resposta(self.historico), self.ia.BASE_PORTFOLIO["stack"])
+
+    def test_sem_chave_ou_com_modelo_invalido_nao_consulta_rede(self):
+        with override_settings(GEMINI_API_KEY=""):
+            self.assertFalse(self.ia.assistente_ativo())
+            with self.assertRaises(self.ia.AssistenteIndisponivel):
+                self.ia.gerar_resposta(self.historico)
+        for modelo in ("", "../modelo", "modelo?key=segredo", "modelo com espaço"):
+            with self.subTest(modelo=modelo), override_settings(GEMINI_MODEL=modelo):
+                with self.assertRaises(self.ia.AssistenteIndisponivel):
+                    self.ia.gerar_resposta(self.historico)
+        self.transporte.assert_not_called()
 
 
 @override_settings(**CONFIG_TESTES, GOOGLE_CLIENT_ID="cliente-google.apps.googleusercontent.com")
@@ -1374,6 +1532,158 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
         self.assertEqual(self.client.patch(url, {}, format="json").status_code, 405)
 
 
+@override_settings(**{
+    **CONFIG_TESTES,
+    "GEMINI_API_KEY": "chave-teste",
+    "GEMINI_MODEL": "gemini-3.5-flash-lite",
+})
+class ChatAssistenteHTTPTests(DadosChatMixin, APITestCase):
+    def setUp(self):
+        self.preparar_dados()
+        geracao = patch(
+            "api.views.gerar_resposta", return_value="Henrique desenvolve projetos web."
+        )
+        self.geracao = geracao.start()
+        self.addCleanup(geracao.stop)
+
+    def test_perfil_informa_assistente_ativo(self):
+        self.assertTrue(self.client.get("/chat/").json()["assistente_ia_ativo"])
+        self.geracao.assert_not_called()
+
+    def test_pergunta_e_resposta_sao_salvas_e_publicadas_sem_alterar_retorno_http(self):
+        chave = uuid.uuid4()
+        with patch("api.views.publicar_evento") as publicar:
+            with self.captureOnCommitCallbacks(execute=True):
+                resposta = self.enviar_http(
+                    self.assistente, "  Quais projetos Henrique desenvolve?  ", chave
+                )
+        self.assertEqual(resposta.status_code, 201)
+        self.assertEqual(resposta.json()["origem"], "usuario")
+        self.assertEqual(resposta.json()["id_cliente"], str(chave))
+        mensagens = list(self.assistente.mensagens.order_by("id"))
+        self.assertEqual(len(mensagens), 2)
+        pergunta, resposta_ia = mensagens
+        self.assertEqual(pergunta.conteudo, "Quais projetos Henrique desenvolve?")
+        self.assertEqual(resposta_ia.origem, "assistente")
+        self.assertIsNone(resposta_ia.remetente_id)
+        self.assertEqual(resposta_ia.conteudo, self.geracao.return_value)
+        self.assertNotEqual(resposta_ia.id_cliente, pergunta.id_cliente)
+        self.geracao.assert_called_once_with([
+            {"role": "user", "parts": [{"text": pergunta.conteudo}]},
+        ])
+        self.assertEqual(publicar.call_count, 2)
+        eventos = [chamada.args[1] for chamada in publicar.call_args_list]
+        self.assertEqual([evento["type"] for evento in eventos], ["mensagem.criada"] * 2)
+        self.assertEqual(
+            [evento["mensagem"]["origem"] for evento in eventos], ["usuario", "assistente"]
+        )
+        self.assertEqual(eventos[1]["mensagem"]["remetente"], {"id": None, "nome": "Assistente"})
+
+    def test_historico_da_ia_fica_restrito_a_conversa_atual(self):
+        Mensagem.objects.create(
+            conversa=self.assistente, remetente=self.usuario, origem="usuario",
+            conteudo="Qual a área de atuação?", id_cliente=uuid.uuid4(),
+        )
+        Mensagem.objects.create(
+            conversa=self.assistente, origem="assistente",
+            conteudo="Desenvolvimento web.", id_cliente=uuid.uuid4(),
+        )
+        Mensagem.objects.create(
+            conversa=self.conversa_outro, remetente=self.outro, origem="usuario",
+            conteudo="Mensagem privada de outro visitante.", id_cliente=uuid.uuid4(),
+        )
+        resposta = self.enviar_http(self.assistente, "Quais tecnologias utiliza?")
+        self.assertEqual(resposta.status_code, 201)
+        self.geracao.assert_called_once_with([
+            {"role": "user", "parts": [{"text": "Qual a área de atuação?"}]},
+            {"role": "model", "parts": [{"text": "Desenvolvimento web."}]},
+            {"role": "user", "parts": [{"text": "Quais tecnologias utiliza?"}]},
+        ])
+
+    def test_caixa_henrique_e_respostas_do_operador_nao_disparam_ia(self):
+        self.assertEqual(self.enviar_http(self.conversa).status_code, 201)
+        self.autorizar(self.token_operador)
+        resposta = self.enviar_http(self.assistente, "Resposta manual do Henrique.")
+        self.assertEqual(resposta.status_code, 201)
+        self.assertEqual(resposta.json()["origem"], "henrique")
+        self.geracao.assert_not_called()
+        self.assertEqual(Mensagem.objects.count(), 2)
+
+    def test_entrada_invalida_e_conversa_alheia_nao_disparam_ia(self):
+        for conteudo in ("", " ", None, 123, "a" * 4001):
+            with self.subTest(conteudo=str(conteudo)[:20]):
+                resposta = self.enviar_http(self.assistente, conteudo)
+                self.assertEqual(resposta.status_code, 400)
+        self.assertEqual(
+            self.enviar_http(self.assistente, "Texto", origem="assistente").status_code, 400
+        )
+        assistente_outro = Conversa.objects.create(usuario=self.outro, destinatario="assistente")
+        self.assertEqual(self.enviar_http(assistente_outro).status_code, 404)
+        self.geracao.assert_not_called()
+        self.assertFalse(Mensagem.objects.exists())
+
+    def test_reenvio_nao_gera_resposta_nova_e_conflito_preserva_par_original(self):
+        chave = uuid.uuid4()
+        with patch("api.views.publicar_evento") as publicar:
+            with self.captureOnCommitCallbacks(execute=True):
+                primeira = self.enviar_http(self.assistente, "Quais projetos?", chave)
+            with self.captureOnCommitCallbacks(execute=True):
+                repetida = self.enviar_http(self.assistente, "Quais projetos?", chave)
+                conflito = self.enviar_http(self.assistente, "Outro texto", chave)
+        self.assertEqual(primeira.status_code, 201)
+        self.assertEqual(repetida.status_code, 200)
+        self.assertEqual(primeira.json()["id"], repetida.json()["id"])
+        self.assertEqual(conflito.status_code, 409)
+        self.assertEqual(Mensagem.objects.count(), 2)
+        self.geracao.assert_called_once()
+        self.assertEqual(publicar.call_count, 2)
+
+    def test_falha_da_ia_nao_persiste_ou_publica_e_permite_reenvio(self):
+        from .ia import AssistenteIndisponivel
+
+        chave = uuid.uuid4()
+        self.geracao.side_effect = AssistenteIndisponivel()
+        with patch("api.views.publicar_evento") as publicar:
+            with self.captureOnCommitCallbacks(execute=True):
+                falha = self.enviar_http(self.assistente, "Quais projetos?", chave)
+            self.assertEqual(falha.status_code, 503)
+            self.assertFalse(Mensagem.objects.exists())
+            publicar.assert_not_called()
+            self.geracao.side_effect = None
+            with self.captureOnCommitCallbacks(execute=True):
+                reenvio = self.enviar_http(self.assistente, "Quais projetos?", chave)
+        self.assertEqual(reenvio.status_code, 201)
+        self.assertEqual(Mensagem.objects.count(), 2)
+        self.assertEqual(self.geracao.call_count, 2)
+        self.assertEqual(publicar.call_count, 2)
+
+    def test_conversa_com_geracao_em_andamento_retorna_erro_recuperavel(self):
+        trava = f"chat.ia.{self.assistente.pk}"
+        cache.add(trava, "ocupada", timeout=30)
+        try:
+            resposta = self.enviar_http(self.assistente, "Quais projetos?")
+            self.assertEqual(resposta.status_code, 503)
+            self.assertFalse(Mensagem.objects.exists())
+            self.geracao.assert_not_called()
+        finally:
+            cache.delete(trava)
+        self.assertEqual(self.enviar_http(self.assistente).status_code, 201)
+
+    def test_falha_ao_salvar_resposta_reverte_pergunta_e_eventos(self):
+        with patch("api.views.publicar_evento") as publicar:
+            with patch(
+                "api.views.registrar_resposta_assistente",
+                side_effect=OperationalError("detalhe interno"),
+            ):
+                with self.captureOnCommitCallbacks(execute=True):
+                    resposta = self.enviar_http(self.assistente, "Quais projetos?")
+        self.assertEqual(resposta.status_code, 503)
+        self.assertNotIn("detalhe interno", str(resposta.json()))
+        self.assertFalse(Mensagem.objects.exists())
+        publicar.assert_not_called()
+        self.geracao.assert_called_once()
+
+
 @override_settings(**CONFIG_TESTES)
 class ChatConcorrenciaTests(DadosChatMixin, TransactionTestCase):
     def setUp(self):
@@ -1414,6 +1724,41 @@ class ChatConcorrenciaTests(DadosChatMixin, TransactionTestCase):
         self.assertIn(self.client.post("/chat/conversas/", dados, format="json").status_code, (200, 201))
         self.assertEqual(Conversa.objects.filter(usuario=self.usuario, destinatario="assistente").count(), 1)
 
+    @override_settings(GEMINI_API_KEY="chave-teste")
+    def test_geracao_em_andamento_impede_chamada_concorrente_e_reenvio_reutiliza_par(self):
+        inicio, liberar = Event(), Event()
+        dados = {"conteudo": "Quais projetos?", "id_cliente": str(uuid.uuid4())}
+        url = f"/chat/conversas/{self.assistente.pk}/mensagens/"
+
+        def gerar(historico):
+            inicio.set()
+            if not liberar.wait(timeout=5):
+                raise RuntimeError("A segunda requisição não liberou o teste.")
+            return "Henrique desenvolve projetos web."
+
+        def enviar():
+            close_old_connections()
+            cliente = APIClient()
+            cliente.credentials(HTTP_AUTHORIZATION=f"Token {self.token.key}")
+            try:
+                return cliente.post(url, dados, format="json").status_code
+            finally:
+                close_old_connections()
+
+        with patch("api.views.gerar_resposta", side_effect=gerar) as geracao:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                primeira = executor.submit(enviar)
+                try:
+                    self.assertTrue(inicio.wait(timeout=5))
+                    self.assertEqual(self.client.post(url, dados, format="json").status_code, 503)
+                    self.assertFalse(Mensagem.objects.exists())
+                finally:
+                    liberar.set()
+                self.assertEqual(primeira.result(timeout=5), 201)
+            self.assertEqual(self.client.post(url, dados, format="json").status_code, 200)
+            geracao.assert_called_once()
+        self.assertEqual(Mensagem.objects.count(), 2)
+
 
 @override_settings(**CONFIG_TESTES)
 class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
@@ -1452,6 +1797,58 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
         self.assertEqual(set(por_tipo), {"mensagem.criada", "mensagem.confirmada"})
         self.assertEqual(por_tipo["mensagem.criada"]["mensagem"]["id"], por_tipo["mensagem.confirmada"]["mensagem"]["id"])
         return por_tipo["mensagem.confirmada"]
+
+    @override_settings(GEMINI_API_KEY="chave-teste")
+    async def test_websocket_gera_resposta_e_reenvio_nao_duplica_ou_publica_de_novo(self):
+        async with self.conexoes() as conectar:
+            usuario = await conectar(self.token)
+            operador = await conectar(self.token_operador)
+            outro = await conectar(self.token_outro)
+            comando = {
+                "type": "mensagem.enviar", "conversa_id": str(self.assistente.pk),
+                "conteudo": "Quais projetos Henrique desenvolve?", "id_cliente": str(uuid.uuid4()),
+            }
+            with patch("api.views.gerar_resposta", return_value="Henrique desenvolve projetos web.") as geracao:
+                await usuario.send_json_to(comando)
+                eventos = [await usuario.receive_json_from(timeout=2) for _ in range(3)]
+                criadas = [evento["mensagem"] for evento in eventos if evento["type"] == "mensagem.criada"]
+                confirmadas = [evento for evento in eventos if evento["type"] == "mensagem.confirmada"]
+                self.assertEqual([mensagem["origem"] for mensagem in criadas], ["usuario", "assistente"])
+                self.assertEqual(len(confirmadas), 1)
+                self.assertEqual(confirmadas[0]["mensagem"]["id"], criadas[0]["id"])
+                self.assertEqual(criadas[1]["remetente"], {"id": None, "nome": "Assistente"})
+                self.assertNotEqual(criadas[0]["id_cliente"], criadas[1]["id_cliente"])
+                for _ in range(2):
+                    self.assertEqual((await operador.receive_json_from())["type"], "mensagem.criada")
+                await usuario.send_json_to(comando)
+                repetida = await usuario.receive_json_from()
+                self.assertEqual(repetida["type"], "mensagem.confirmada")
+                self.assertTrue(repetida["repetida"])
+                geracao.assert_called_once()
+            self.assertEqual(await Mensagem.objects.acount(), 2)
+            self.assertTrue(await usuario.receive_nothing(timeout=0.03))
+            self.assertTrue(await operador.receive_nothing(timeout=0.03))
+            self.assertTrue(await outro.receive_nothing(timeout=0.03))
+
+    @override_settings(GEMINI_API_KEY="chave-teste")
+    async def test_falha_da_ia_no_websocket_preserva_conexao_e_nao_salva_mensagens(self):
+        from .ia import AssistenteIndisponivel
+
+        async with self.conexoes() as conectar:
+            socket = await conectar(self.token)
+            comando = {
+                "type": "mensagem.enviar", "conversa_id": str(self.assistente.pk),
+                "conteudo": "Quais projetos?", "id_cliente": str(uuid.uuid4()),
+            }
+            with patch("api.views.gerar_resposta", side_effect=AssistenteIndisponivel()):
+                await socket.send_json_to(comando)
+                erro = await socket.receive_json_from()
+                self.assertEqual(erro["type"], "erro")
+                self.assertEqual(erro["status"], 503)
+                self.assertEqual(erro["id_cliente"], comando["id_cliente"])
+            self.assertFalse(await Mensagem.objects.aexists())
+            await socket.send_json_to({"type": "ping"})
+            self.assertEqual((await socket.receive_json_from())["type"], "pong")
 
     async def test_origem_nao_autorizada_ou_ausente_e_token_na_url_sao_rejeitados(self):
         async with self.conexoes() as conectar:

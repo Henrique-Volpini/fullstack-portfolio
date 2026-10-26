@@ -5,13 +5,14 @@ from functools import partial
 from threading import Lock
 from time import monotonic, time
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import uuid4, uuid5
 
 from asgiref.sync import async_to_sync
 from axes.utils import reset
 from channels.layers import get_channel_layer
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
+from django.core.cache import cache
 from django.db import DatabaseError, IntegrityError, transaction
 from django.db.models import Count, F, Prefetch, Q
 from django.http import JsonResponse
@@ -38,6 +39,7 @@ from rest_framework.throttling import ScopedRateThrottle, SimpleRateThrottle
 from rest_framework.views import APIView
 
 from .authentication import obter_token_acesso
+from .ia import AssistenteIndisponivel, LIMITE_HISTORICO, assistente_ativo, gerar_resposta
 from .models import ContaGoogle, Conversa, Mensagem
 from .serializers import (
     CadastroUsuarioSerializer, ConversaSerializer, CriarConversaSerializer,
@@ -387,7 +389,13 @@ def _verificar_repetida(mensagem, remetente, dados):
     return mensagem, False
 
 
-def _persistir_mensagem(conversa, remetente, origem, dados):
+def _limitar_mensagem(remetente):
+    limite = MensagemThrottle()
+    if not limite.allow_request(SimpleNamespace(user=remetente), None):
+        raise Throttled(wait=limite.wait())
+
+
+def _persistir_mensagem(conversa, remetente, origem, dados, *, limitar=True):
     anteriores = Mensagem.objects.select_related("remetente").filter(
         conversa=conversa, origem=origem, id_cliente=dados["id_cliente"]
     )
@@ -396,10 +404,8 @@ def _persistir_mensagem(conversa, remetente, origem, dados):
         return _verificar_repetida(anterior, remetente, dados)
 
     operadores = obter_operadores()
-    if remetente is not None:
-        limite = MensagemThrottle()
-        if not limite.allow_request(SimpleNamespace(user=remetente), None):
-            raise Throttled(wait=limite.wait())
+    if remetente is not None and limitar:
+        _limitar_mensagem(remetente)
 
     try:
         with transaction.atomic():
@@ -426,7 +432,57 @@ def enviar_mensagem(usuario, conversa_id, dados):
     validacao = EnviarMensagemSerializer(data=dados)
     validacao.is_valid(raise_exception=True)
     origem = Mensagem.Origem.HENRIQUE if eh_operador(usuario) else Mensagem.Origem.USUARIO
+    if (
+        origem == Mensagem.Origem.USUARIO
+        and conversa.destinatario == Conversa.Destinatario.ASSISTENTE
+        and assistente_ativo()
+    ):
+        return _enviar_para_assistente(conversa, usuario, validacao.validated_data)
     return _persistir_mensagem(conversa, usuario, origem, validacao.validated_data)
+
+
+def _enviar_para_assistente(conversa, usuario, dados):
+    chave_trava = f"chat.ia.{conversa.pk}"
+    if not cache.add(chave_trava, True, timeout=30):
+        raise AssistenteIndisponivel("O assistente já está respondendo nesta conversa. Tente novamente.")
+    try:
+        anterior = conversa.mensagens.select_related("remetente").filter(
+            origem=Mensagem.Origem.USUARIO, id_cliente=dados["id_cliente"],
+        ).first()
+        id_resposta = uuid5(conversa.pk, str(dados["id_cliente"]))
+        if anterior is not None:
+            _verificar_repetida(anterior, usuario, dados)
+            if conversa.mensagens.filter(
+                origem=Mensagem.Origem.ASSISTENTE, id_cliente=id_resposta,
+            ).exists():
+                return anterior, False
+        obter_operadores()
+        _limitar_mensagem(usuario)
+        mensagens = conversa.mensagens.order_by("-id")
+        if anterior is not None:
+            mensagens = mensagens.filter(id__lt=anterior.pk)
+        historico = [
+            {
+                "role": "user" if origem == Mensagem.Origem.USUARIO else "model",
+                "parts": [{"text": conteudo}],
+            }
+            for origem, conteudo in reversed(list(
+                mensagens.values_list("origem", "conteudo")[:LIMITE_HISTORICO - 1]
+            ))
+        ]
+        historico.append({"role": "user", "parts": [{"text": dados["conteudo"]}]})
+        conteudo_resposta = gerar_resposta(historico)
+        # Rede fora da transação; pergunta, resposta e eventos são confirmados juntos.
+        with transaction.atomic():
+            mensagem, criada = _persistir_mensagem(
+                conversa, usuario, Mensagem.Origem.USUARIO, dados, limitar=False,
+            )
+            registrar_resposta_assistente(conversa.pk, {
+                "conteudo": conteudo_resposta, "id_cliente": id_resposta,
+            })
+        return mensagem, criada
+    finally:
+        cache.delete(chave_trava)
 
 
 def registrar_resposta_assistente(conversa_id, dados):
@@ -510,7 +566,7 @@ class ChatInicioView(ChatAPIView):
                 {"id": valor, "nome": nome}
                 for valor, nome in Conversa.Destinatario.choices
             ],
-            "assistente_ia_ativo": False,
+            "assistente_ia_ativo": assistente_ativo(),
             "websocket_path": "/ws/chat/",
         })
 

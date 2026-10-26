@@ -17,6 +17,8 @@ from rest_framework.exceptions import APIException, AuthenticationFailed, NotFou
 from redis.exceptions import RedisError
 
 from .authentication import SessaoIndisponivel, expira_em, validar_token
+from .ia import assistente_ativo
+from .models import Conversa
 from .views import (
     ChatIndisponivel, WebsocketThrottle, assinatura_token, eh_operador,
     conversas_permitidas, enviar_mensagem, grupo_usuario, marcar_leitura,
@@ -206,7 +208,21 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         return True
 
     @database_sync_to_async
-    def _enviar(self, conversa_id, dados):
+    def _usa_ia(self, conversa_id):
+        return (
+            assistente_ativo() and not self.operador
+            and conversas_permitidas(self.usuario).filter(
+                pk=conversa_id, destinatario=Conversa.Destinatario.ASSISTENTE,
+            ).exists()
+        )
+
+    async def _enviar(self, conversa_id, dados):
+        usa_ia = await self._usa_ia(conversa_id)
+        return await database_sync_to_async(
+            self._enviar_sincrono, thread_sensitive=not usa_ia,
+        )(conversa_id, dados)
+
+    def _enviar_sincrono(self, conversa_id, dados):
         mensagem, criada = enviar_mensagem(self.usuario, conversa_id, dados)
         return {
             "type": "mensagem.confirmada", "mensagem": MensagemSerializer(mensagem).data,

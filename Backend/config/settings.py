@@ -23,6 +23,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env", override=False)
 
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+GEMINI_API_KEY = os.environ.get("GEMINI_KEY", "").strip()
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
 
 try:
     AUTH_TOKEN_TTL_SECONDS = int(os.environ.get("DJANGO_TOKEN_TTL_SECONDS", "3600"))
