@@ -14,13 +14,14 @@ from django.http import Http404
 from django.utils import timezone
 from rest_framework import serializers
 from rest_framework.exceptions import APIException, AuthenticationFailed, NotFound, Throttled, ValidationError
+from rest_framework.throttling import AnonRateThrottle
 from redis.exceptions import RedisError
 
 from .authentication import SessaoIndisponivel, expira_em, validar_token
 from .ia import assistente_ativo
 from .models import Conversa
 from .views.chat import (
-    ChatIndisponivel, WebsocketThrottle, assinatura_token, eh_operador,
+    ChatIndisponivel, assinatura_token, eh_operador,
     conversas_permitidas, enviar_mensagem, grupo_usuario, marcar_leitura,
 )
 from .serializers import MensagemSerializer, UsuarioChatSerializer
@@ -33,8 +34,9 @@ def autenticar_token(token):
 
 @database_sync_to_async
 def limitar_conexao(ip):
-    limite = WebsocketThrottle()
-    if not limite.allow_request(SimpleNamespace(META={"REMOTE_ADDR": ip}), None):
+    limite = AnonRateThrottle()
+    requisicao = SimpleNamespace(user=None, headers={}, META={"REMOTE_ADDR": ip})
+    if not limite.allow_request(requisicao, None):
         raise Throttled(wait=limite.wait())
 
 

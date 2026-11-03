@@ -6,7 +6,6 @@ from rest_framework.authtoken.models import Token
 from rest_framework.generics import CreateAPIView
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from ..authentication import obter_token_acesso
@@ -26,7 +25,6 @@ class CadastroUsuarioView(CreateAPIView):
     serializer_class = CadastroUsuarioSerializer
     permission_classes = (AllowAny,)
     authentication_classes = ()
-    throttle_classes = (ScopedRateThrottle,)
     throttle_scope = "cadastro"
     http_method_names = ("post", "options")
 
@@ -34,7 +32,6 @@ class CadastroUsuarioView(CreateAPIView):
 class LoginUsuarioView(APIView):
     permission_classes = (AllowAny,)
     authentication_classes = ()
-    throttle_classes = (ScopedRateThrottle,)
     throttle_scope = "login"
     http_method_names = ("post", "options")
 

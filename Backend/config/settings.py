@@ -114,12 +114,15 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.ScopedRateThrottle",
+    ],
     "DEFAULT_THROTTLE_RATES": {
         "login": "20/min",
         "cadastro": "5/hour",
         "chat": "120/min",
-        "chat_mensagem": "60/min",
-        "chat_websocket": "20/min",
+        "user": "60/min",
+        "anon": "20/min",
     },
     "NUM_PROXIES": 0,
 }

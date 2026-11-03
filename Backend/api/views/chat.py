@@ -15,9 +15,10 @@ from rest_framework import serializers, status
 from rest_framework.exceptions import (
     APIException, AuthenticationFailed, NotFound, PermissionDenied, Throttled,
 )
+from rest_framework.generics import ListAPIView, RetrieveAPIView
 from rest_framework.pagination import CursorPagination, PageNumberPagination
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle, SimpleRateThrottle
+from rest_framework.throttling import UserRateThrottle
 from rest_framework.views import APIView
 
 from ..ia import AssistenteIndisponivel, LIMITE_HISTORICO, assistente_ativo, gerar_resposta
@@ -41,20 +42,6 @@ class ConflitoMensagem(APIException):
     status_code = 409
     default_detail = "Este id_cliente já foi utilizado em outra mensagem."
     default_code = "conflito_mensagem"
-
-
-class MensagemThrottle(SimpleRateThrottle):
-    scope = "chat_mensagem"
-
-    def get_cache_key(self, request, view):
-        return self.cache_format % {"scope": self.scope, "ident": request.user.pk}
-
-
-class WebsocketThrottle(SimpleRateThrottle):
-    scope = "chat_websocket"
-
-    def get_cache_key(self, request, view):
-        return self.cache_format % {"scope": self.scope, "ident": request.META["REMOTE_ADDR"]}
 
 
 def eh_operador(usuario):
@@ -160,7 +147,7 @@ def _verificar_repetida(mensagem, remetente, dados):
 
 
 def _limitar_mensagem(remetente):
-    limite = MensagemThrottle()
+    limite = UserRateThrottle()
     if not limite.allow_request(SimpleNamespace(user=remetente), None):
         raise Throttled(wait=limite.wait())
 
@@ -315,7 +302,6 @@ class MensagensPagination(CursorPagination):
 
 
 class ChatAPIView(APIView):
-    throttle_classes = (ScopedRateThrottle,)
     throttle_scope = "chat"
     http_method_names = ("get", "post", "head", "options")
 
@@ -341,16 +327,17 @@ class ChatInicioView(ChatAPIView):
         })
 
 
-class ConversasView(ChatAPIView):
-    def get(self, request):
-        conversas = consultar_conversas(request.user)
-        destinatario = request.query_params.get("destinatario")
+class ConversasView(ChatAPIView, ListAPIView):
+    serializer_class = ConversaSerializer
+    pagination_class = ConversasPagination
+
+    def get_queryset(self):
+        conversas = consultar_conversas(self.request.user)
+        destinatario = self.request.query_params.get("destinatario")
         if destinatario is not None:
             campo = serializers.ChoiceField(choices=Conversa.Destinatario.choices)
             conversas = conversas.filter(destinatario=campo.run_validation(destinatario))
-        paginacao = ConversasPagination()
-        pagina = paginacao.paginate_queryset(conversas, request, view=self)
-        return paginacao.get_paginated_response(ConversaSerializer(pagina, many=True).data)
+        return conversas
 
     def post(self, request):
         conversa, criada = criar_conversa(request.user, request.data)
@@ -361,24 +348,26 @@ class ConversasView(ChatAPIView):
         )
 
 
-class ConversaDetalheView(ChatAPIView):
+class ConversaDetalheView(ChatAPIView, RetrieveAPIView):
     http_method_names = ("get", "head", "options")
+    serializer_class = ConversaSerializer
+    lookup_url_kwarg = "conversa_id"
 
-    def get(self, request, conversa_id):
-        conversa = get_object_or_404(consultar_conversas(request.user), pk=conversa_id)
-        return Response(ConversaSerializer(conversa).data)
+    def get_queryset(self):
+        return consultar_conversas(self.request.user)
 
 
-class MensagensView(ChatAPIView):
-    def get(self, request, conversa_id):
-        conversa = obter_conversa(request.user, conversa_id)
+class MensagensView(ChatAPIView, ListAPIView):
+    serializer_class = MensagemSerializer
+    pagination_class = MensagensPagination
+
+    def get_queryset(self):
+        conversa = obter_conversa(self.request.user, self.kwargs["conversa_id"])
         mensagens = conversa.mensagens.select_related("remetente").all()
-        if "apos_id" in request.query_params:
+        if "apos_id" in self.request.query_params:
             campo = serializers.IntegerField(min_value=0, max_value=9223372036854775807)
-            mensagens = mensagens.filter(id__gt=campo.run_validation(request.query_params["apos_id"]))
-        paginacao = MensagensPagination()
-        pagina = paginacao.paginate_queryset(mensagens, request, view=self)
-        return paginacao.get_paginated_response(MensagemSerializer(pagina, many=True).data)
+            mensagens = mensagens.filter(id__gt=campo.run_validation(self.request.query_params["apos_id"]))
+        return mensagens
 
     def post(self, request, conversa_id):
         mensagem, criada = enviar_mensagem(request.user, conversa_id, request.data)

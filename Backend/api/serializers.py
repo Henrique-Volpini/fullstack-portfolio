@@ -1,13 +1,12 @@
-import base64
-import binascii
-import json
-import re
 from collections.abc import Mapping
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as ErroValidacaoDjango
+from django.core.validators import RegexValidator
 from django.db import IntegrityError, transaction
+from google.auth import jwt as google_jwt
+from google.auth.exceptions import GoogleAuthError
 from rest_framework import serializers
 
 from .ia import BASE_PORTFOLIO
@@ -24,32 +23,22 @@ class LoginGoogleSerializer(serializers.Serializer):
         if not isinstance(self.initial_data.get("credential"), str) or not credential.strip():
             raise serializers.ValidationError("Informe a credencial do Google como texto.")
         try:
-            partes = credential.split(".")
-            if len(partes) != 3 or any(
-                re.fullmatch(r"[A-Za-z0-9_-]+", parte) is None for parte in partes
-            ):
-                raise ValueError
-            decodificadas = [
-                base64.b64decode(parte + "=" * (-len(parte) % 4), altchars=b"-_", validate=True)
-                for parte in partes
-            ]
-            cabecalho, corpo = [json.loads(parte.decode("utf-8")) for parte in decodificadas[:2]]
+            RegexValidator(r"\A[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\Z")(credential)
+            cabecalho = google_jwt.decode_header(credential)
             if (
-                not isinstance(cabecalho, dict) or not isinstance(corpo, dict)
-                or cabecalho.get("alg") != "RS256"
+                cabecalho.get("alg") != "RS256"
                 or not isinstance(cabecalho.get("kid"), str) or not cabecalho["kid"].strip()
             ):
                 raise ValueError
-        except (ValueError, binascii.Error, UnicodeError, RecursionError):
+        except (ErroValidacaoDjango, ValueError, GoogleAuthError, UnicodeError, RecursionError):
             raise serializers.ValidationError("Informe uma credencial Google no formato JWT válido.") from None
         # Os dados decodificados não são confiáveis até a verificação criptográfica.
         return credential
 
 
 class LoginUsuarioSerializer(serializers.Serializer):
-    username = serializers.CharField(required=True, max_length=150)
+    username = serializers.CharField(max_length=150)
     password = serializers.CharField(
-        required=True,
         max_length=64,
         write_only=True,
         trim_whitespace=False,
@@ -65,7 +54,6 @@ class LoginUsuarioSerializer(serializers.Serializer):
 class CadastroUsuarioSerializer(serializers.ModelSerializer):
 
     password = serializers.CharField(
-        required=True,
         max_length=64,
         write_only=True,
         trim_whitespace=False,
@@ -76,10 +64,6 @@ class CadastroUsuarioSerializer(serializers.ModelSerializer):
         model = ModeloUsuario
         fields = ("id", "username", "email", "password")
         read_only_fields = ("id",)
-        extra_kwargs = {
-            "username": {"required": True},
-            "email": {"required": False, "allow_blank": True},
-        }
 
     def validate_username(self, username):
         nome_normalizado = ModeloUsuario.normalize_username(username)
@@ -181,7 +165,7 @@ class CriarConversaSerializer(EntradaChatSerializer):
 
 
 class EnviarMensagemSerializer(EntradaChatSerializer):
-    conteudo = serializers.CharField(max_length=4000, allow_blank=False)
+    conteudo = serializers.CharField(max_length=4000)
     id_cliente = serializers.UUIDField()
 
     def validate_conteudo(self, conteudo):

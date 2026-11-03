@@ -36,13 +36,13 @@ from rest_framework.authtoken.models import Token
 from rest_framework.parsers import JSONParser
 from rest_framework.request import Request as DRFRequest
 from rest_framework.test import APIClient, APITestCase
+from rest_framework.throttling import UserRateThrottle
 from twisted.internet.testing import StringTransport
 from twisted.web.http import HTTPChannel, Request
 
 from .models import ContaGoogle, Conversa, Mensagem
 from .views.chat import (
-    MensagemThrottle, enviar_mensagem, grupo_usuario, publicar_evento,
-    registrar_resposta_assistente,
+    enviar_mensagem, grupo_usuario, publicar_evento, registrar_resposta_assistente,
 )
 
 
@@ -1528,6 +1528,55 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
             self.assertEqual(filtrada["count"], 1)
         self.assertEqual(self.client.get("/chat/conversas/?destinatario=invalido").status_code, 400)
 
+    def test_paginacao_de_conversas_preserva_tamanho_e_filtro_nos_links(self):
+        usuarios = get_user_model().objects.bulk_create([
+            get_user_model()(username=f"paginacao_{indice}") for indice in range(21)
+        ])
+        Conversa.objects.bulk_create([
+            Conversa(usuario=usuario, destinatario="henrique") for usuario in usuarios
+        ])
+        self.autorizar(self.token_operador)
+        url = "/chat/conversas/"
+        padrao = self.client.get(url).json()
+        self.assertEqual(padrao["count"], 24)
+        self.assertEqual(len(padrao["results"]), 20)
+        primeira = self.client.get(url, {"destinatario": "henrique", "tamanho": 2}).json()
+        self.assertEqual(primeira["count"], 23)
+        self.assertEqual(len(primeira["results"]), 2)
+        partes = urlsplit(primeira["next"])
+        segunda = self.client.get(partes.path + "?" + partes.query).json()
+        self.assertEqual(segunda["count"], 23)
+        self.assertEqual(len(segunda["results"]), 2)
+        self.assertTrue(all(
+            conversa["destinatario"] == "henrique"
+            for conversa in primeira["results"] + segunda["results"]
+        ))
+        self.assertTrue(
+            {conversa["id"] for conversa in primeira["results"]}.isdisjoint(
+                conversa["id"] for conversa in segunda["results"]
+            )
+        )
+
+    def test_head_preserva_autenticacao_e_acesso_as_conversas(self):
+        caminhos = (
+            "/chat/conversas/", f"/chat/conversas/{self.conversa.pk}/",
+            f"/chat/conversas/{self.conversa.pk}/mensagens/",
+        )
+        for caminho in caminhos:
+            with self.subTest(caminho=caminho):
+                resposta = self.client.head(caminho)
+                self.assertEqual(resposta.status_code, 200)
+                self.assertEqual(resposta.content, b"")
+        for sufixo in ("", "mensagens/"):
+            self.assertEqual(
+                self.client.head(f"/chat/conversas/{self.conversa_outro.pk}/{sufixo}").status_code,
+                404,
+            )
+        self.client.credentials()
+        for caminho in caminhos:
+            with self.subTest(sem_token=caminho):
+                self.assertEqual(self.client.head(caminho).status_code, 401)
+
     def test_staff_sem_superuser_nao_acessa_conversa_alheia(self):
         self.usuario.is_staff = True
         self.usuario.save(update_fields=("is_staff",))
@@ -1610,7 +1659,7 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
         self.assertEqual(self.enviar_http(id_cliente=chave).status_code, 201)
 
     def test_limite_de_mensagem_compartilhado_entre_conversas_e_reenvio_seguro(self):
-        with patch.object(MensagemThrottle, "get_rate", return_value="2/min"):
+        with patch.object(UserRateThrottle, "get_rate", return_value="2/min"):
             chave = uuid.uuid4()
             self.assertEqual(self.enviar_http(id_cliente=chave).status_code, 201)
             self.assertEqual(self.enviar_http(self.assistente).status_code, 201)
@@ -1695,7 +1744,7 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
         self.assertEqual(self.client.get("/chat/").status_code, 401)
 
     def test_logout_revoga_acesso_mesmo_com_cota_do_chat_esgotada(self):
-        with patch("api.views.chat.ScopedRateThrottle.get_rate", return_value="1/min"):
+        with patch("rest_framework.throttling.ScopedRateThrottle.get_rate", return_value="1/min"):
             self.assertEqual(self.client.get("/chat/").status_code, 200)
             self.assertEqual(self.client.get("/chat/").status_code, 429)
             self.assertEqual(self.client.post("/logout/").status_code, 204)
@@ -1733,9 +1782,14 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
             Mensagem.objects.create(conversa=self.conversa, origem="henrique", conteudo="Falso", id_cliente=uuid.uuid4())
 
     def test_metodos_de_edicao_e_exclusao_nao_expostos(self):
-        url = f"/chat/conversas/{self.conversa.pk}/"
-        self.assertEqual(self.client.delete(url).status_code, 405)
-        self.assertEqual(self.client.patch(url, {}, format="json").status_code, 405)
+        for caminho in (
+            "/chat/conversas/", f"/chat/conversas/{self.conversa.pk}/",
+            f"/chat/conversas/{self.conversa.pk}/mensagens/",
+        ):
+            for metodo in ("delete", "patch", "put"):
+                with self.subTest(caminho=caminho, metodo=metodo):
+                    resposta = getattr(self.client, metodo)(caminho, {}, format="json")
+                    self.assertEqual(resposta.status_code, 405)
 
 
 @override_settings(**{
@@ -2386,7 +2440,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
             self.assertEqual((await binario.receive_output())["code"], 1003)
 
     async def test_excesso_de_conexoes_e_frames_encerra_acesso(self):
-        with patch("api.websocket.WebsocketThrottle.get_rate", return_value="1/min"):
+        with patch("api.websocket.AnonRateThrottle.get_rate", return_value="1/min"):
             async with self.conexoes() as conectar:
                 socket = await conectar(self.token)
                 await conectar(aceita=False)
@@ -2407,7 +2461,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
                 self.assertEqual((await socket.receive_output())["code"], 1013)
 
     async def test_limite_de_envio_e_compartilhado_entre_http_e_websocket(self):
-        with patch.object(MensagemThrottle, "get_rate", return_value="1/min"):
+        with patch.object(UserRateThrottle, "get_rate", return_value="1/min"):
             async with self.conexoes() as conectar:
                 resposta = await database_sync_to_async(self.enviar_http)()
                 self.assertEqual(resposta.status_code, 201)

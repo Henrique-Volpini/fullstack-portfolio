@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.db import DatabaseError, IntegrityError, transaction
+from django.db import DatabaseError
 from django.utils.http import parse_http_date_safe
 from google.auth import crypt as google_crypt
 from google.auth.exceptions import GoogleAuthError, TransportError
@@ -20,7 +20,6 @@ from rest_framework.exceptions import APIException, AuthenticationFailed
 from rest_framework.parsers import JSONParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from ..authentication import obter_token_acesso
@@ -113,7 +112,6 @@ class LoginGoogleView(APIView):
     permission_classes = (AllowAny,)
     authentication_classes = ()
     parser_classes = (JSONParser,)
-    throttle_classes = (ScopedRateThrottle,)
     throttle_scope = "login"
     http_method_names = ("post", "options")
 
@@ -154,27 +152,20 @@ class LoginGoogleView(APIView):
             raise AuthenticationFailed("Credencial do Google inválida ou expirada.") from None
 
         try:
-            conta = ContaGoogle.objects.select_related("usuario").filter(sub=sub).first()
-            if conta is None:
-                try:
-                    with transaction.atomic():
-                        usuario = get_user_model().objects.create_user(
-                            username=f"google_{uuid4().hex}",
-                            password=None,
-                            email=email,
-                            first_name=nome[:150],
-                            last_name=sobrenome[:150],
-                        )
-                        conta = ContaGoogle.objects.create(usuario=usuario, sub=sub)
-                except IntegrityError:
-                    # Outro acesso pode ter criado o mesmo vínculo durante a transação.
-                    conta = ContaGoogle.objects.select_related("usuario").filter(sub=sub).first()
-                    if conta is None:
-                        raise
+            conta, _ = ContaGoogle.objects.select_related("usuario").get_or_create(
+                sub=sub,
+                defaults={
+                    "usuario": lambda: get_user_model().objects.create_user(
+                        username=f"google_{uuid4().hex}",
+                        password=None,
+                        email=email,
+                        first_name=nome[:150],
+                        last_name=sobrenome[:150],
+                    ),
+                },
+            )
 
             usuario = conta.usuario
-            if not usuario.is_active:
-                raise AuthenticationFailed("Esta conta está desativada.")
             token_acesso = obter_token_acesso(usuario)
         except DatabaseError:
             raise LoginGoogleIndisponivel() from None
