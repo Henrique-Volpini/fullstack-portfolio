@@ -11,6 +11,7 @@ from email.utils import formatdate
 from threading import Barrier, Event, Lock
 from time import time
 from types import SimpleNamespace
+from unittest import addModuleCleanup
 from unittest.mock import AsyncMock, patch
 from urllib.parse import urlsplit
 
@@ -19,6 +20,7 @@ from channels.layers import get_channel_layer
 from channels.testing import WebsocketCommunicator
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.core.management import call_command
@@ -39,6 +41,49 @@ from .views import (
     MensagemThrottle, enviar_mensagem, grupo_usuario, publicar_evento,
     registrar_resposta_assistente,
 )
+
+
+def setUpModule():
+    # Nunca herdar as credenciais reais do .env durante os testes.
+    configuracao = override_settings(
+        GOOGLE_CLIENT_ID="cliente-google.apps.googleusercontent.com",
+        GEMINI_API_KEY="",
+        GEMINI_MODEL="gemini-3.5-flash-lite",
+    )
+    configuracao.enable()
+    addModuleCleanup(configuracao.disable)
+
+    # Os mocks locais continuam funcionando; uma chamada esquecida falha sem rede.
+    transporte = patch(
+        "requests.sessions.Session.request",
+        side_effect=AssertionError("HTTP real bloqueado nos testes; use mocks."),
+    )
+    transporte.start()
+    addModuleCleanup(transporte.stop)
+
+
+class IsolamentoServicosExternosTests(SimpleTestCase):
+    def test_configuracao_padrao_nao_usa_credenciais_reais(self):
+        self.assertTrue(settings.GEMINI_API_KEY == "")
+        self.assertEqual(settings.GOOGLE_CLIENT_ID, "cliente-google.apps.googleusercontent.com")
+
+    def test_consulta_google_sem_mock_e_bloqueada_antes_do_transporte(self):
+        from .views import GOOGLE_CERTIFICADOS_URL, _requisitar_certificados_google
+
+        with patch("api.views._cache_certificados_google", None):
+            with patch("requests.adapters.HTTPAdapter.send") as enviar:
+                with self.assertRaisesRegex(AssertionError, "HTTP real bloqueado nos testes"):
+                    _requisitar_certificados_google(GOOGLE_CERTIFICADOS_URL)
+                enviar.assert_not_called()
+
+    @override_settings(GEMINI_API_KEY="chave-teste")
+    def test_gemini_sem_mock_e_bloqueado_antes_do_transporte(self):
+        from .ia import gerar_resposta
+
+        with patch("requests.adapters.HTTPAdapter.send") as enviar:
+            with self.assertRaisesRegex(AssertionError, "HTTP real bloqueado nos testes"):
+                gerar_resposta([{"role": "user", "parts": [{"text": "Olá!"}]}])
+            enviar.assert_not_called()
 
 
 def credencial_google_teste(cabecalho=None, perfil=None, *, tamanho=None):
