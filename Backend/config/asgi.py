@@ -30,7 +30,8 @@ class RequisicaoHTTPLimitada(http_protocol.WebRequest):
     def gotLength(self, length):
         self._bytes_recebidos = 0
         self._corpo_excedido = False
-        excedido = length is not None and length > settings.HTTP_REQUEST_MAX_BYTES
+        limite = settings.DATA_UPLOAD_MAX_MEMORY_SIZE
+        excedido = limite is not None and length is not None and length > limite
         super().gotLength(0 if excedido else length)
         if excedido:
             self._rejeitar_corpo()
@@ -39,7 +40,8 @@ class RequisicaoHTTPLimitada(http_protocol.WebRequest):
         if self._corpo_excedido:
             return
         self._bytes_recebidos += len(data)
-        if self._bytes_recebidos > settings.HTTP_REQUEST_MAX_BYTES:
+        limite = settings.DATA_UPLOAD_MAX_MEMORY_SIZE
+        if limite is not None and self._bytes_recebidos > limite:
             self._rejeitar_corpo()
             return
         super().handleContentChunk(data)
@@ -62,8 +64,8 @@ class RequisicaoHTTPLimitada(http_protocol.WebRequest):
         self.loseConnection()
 
 
-# O Daphne 4.2 consulta esta classe ao abrir cada conexão. O middleware Django
-# só roda após o buffer do servidor, por isso o teto também é aplicado aqui.
+# O Daphne 4.2 consulta esta classe ao abrir cada conexão. O limite nativo do
+# Django só atua após o buffer do servidor, por isso o teto também é aplicado aqui.
 http_protocol.WebRequest = RequisicaoHTTPLimitada
 
 application = ProtocolTypeRouter({

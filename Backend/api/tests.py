@@ -23,21 +23,24 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.core.exceptions import RequestDataTooBig
 from django.core.management import call_command
 from django.db import (
     IntegrityError, OperationalError, close_old_connections, connection, transaction,
 )
-from django.test import SimpleTestCase, TransactionTestCase, override_settings
+from django.test import RequestFactory, SimpleTestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 from google.auth import crypt as google_crypt, jwt as google_jwt
 from google.auth.exceptions import GoogleAuthError, TransportError
 from rest_framework.authtoken.models import Token
+from rest_framework.parsers import JSONParser
+from rest_framework.request import Request as DRFRequest
 from rest_framework.test import APIClient, APITestCase
 from twisted.internet.testing import StringTransport
 from twisted.web.http import HTTPChannel, Request
 
 from .models import ContaGoogle, Conversa, Mensagem
-from .views import (
+from .views.chat import (
     MensagemThrottle, enviar_mensagem, grupo_usuario, publicar_evento,
     registrar_resposta_assistente,
 )
@@ -68,9 +71,9 @@ class IsolamentoServicosExternosTests(SimpleTestCase):
         self.assertEqual(settings.GOOGLE_CLIENT_ID, "cliente-google.apps.googleusercontent.com")
 
     def test_consulta_google_sem_mock_e_bloqueada_antes_do_transporte(self):
-        from .views import GOOGLE_CERTIFICADOS_URL, _requisitar_certificados_google
+        from .views.google import GOOGLE_CERTIFICADOS_URL, _requisitar_certificados_google
 
-        with patch("api.views._cache_certificados_google", None):
+        with patch("api.views.google._cache_certificados_google", None):
             with patch("requests.adapters.HTTPAdapter.send") as enviar:
                 with self.assertRaisesRegex(AssertionError, "HTTP real bloqueado nos testes"):
                     _requisitar_certificados_google(GOOGLE_CERTIFICADOS_URL)
@@ -302,7 +305,7 @@ class ServidorHTTPTests(SimpleTestCase):
             canal.dataReceived(
                 b"POST /login/ HTTP/1.1\r\nHost: testserver\r\n"
                 b"Expect: 100-continue\r\nContent-Length: "
-                + str(settings.HTTP_REQUEST_MAX_BYTES + 1).encode() + b"\r\n\r\n"
+                + str(settings.DATA_UPLOAD_MAX_MEMORY_SIZE + 1).encode() + b"\r\n\r\n"
             )
         self.assertIn(b" 413 ", transporte.value().split(b"\r\n", 1)[0])
         self.assertNotIn(b"100 Continue", transporte.value())
@@ -314,7 +317,7 @@ class ServidorHTTPTests(SimpleTestCase):
         from config.asgi import RequisicaoHTTPLimitada
 
         canal, transporte = self.abrir_canal_daphne()
-        limite = settings.HTTP_REQUEST_MAX_BYTES
+        limite = settings.DATA_UPLOAD_MAX_MEMORY_SIZE
         with patch.object(RequisicaoHTTPLimitada, "process") as processar:
             canal.dataReceived(
                 b"POST /login/ HTTP/1.1\r\nHost: testserver\r\n"
@@ -337,7 +340,7 @@ class ServidorHTTPTests(SimpleTestCase):
         from config.asgi import RequisicaoHTTPLimitada
 
         canal, transporte = self.abrir_canal_daphne()
-        corpo = b"x" * (settings.HTTP_REQUEST_MAX_BYTES + 1)
+        corpo = b"x" * (settings.DATA_UPLOAD_MAX_MEMORY_SIZE + 1)
         with patch.object(RequisicaoHTTPLimitada, "process") as processar:
             canal.dataReceived(
                 b"POST /login/ HTTP/1.1\r\nHost: testserver\r\n"
@@ -351,7 +354,7 @@ class ServidorHTTPTests(SimpleTestCase):
     def test_aceita_corpo_exatamente_no_limite_com_e_sem_content_length(self):
         from config.asgi import RequisicaoHTTPLimitada
 
-        corpo = b"x" * settings.HTTP_REQUEST_MAX_BYTES
+        corpo = b"x" * settings.DATA_UPLOAD_MAX_MEMORY_SIZE
         for chunked in (False, True):
             with self.subTest(chunked=chunked):
                 canal, transporte = self.abrir_canal_daphne()
@@ -371,17 +374,13 @@ class ServidorHTTPTests(SimpleTestCase):
                 self.assertEqual(transporte.value(), b"")
                 self.assertFalse(transporte.disconnecting)
 
-    def test_middleware_rejeita_excesso_antes_do_parser_nos_endpoints_http(self):
-        corpo = b"x" * (settings.HTTP_REQUEST_MAX_BYTES + 1)
-        with patch("rest_framework.parsers.JSONParser.parse") as interpretar:
-            for caminho in (
-                "/login/", "/login/google/", "/usuarios/", "/chat/conversas/",
-                f"/chat/conversas/{uuid.uuid4()}/mensagens/",
-            ):
-                with self.subTest(caminho=caminho):
-                    resposta = self.client.post(caminho, corpo, content_type="application/json")
-                    self.assertEqual(resposta.status_code, 413)
-                    self.assertEqual(resposta.json()["detail"], "Corpo da requisição muito grande.")
+    @override_settings(DATA_UPLOAD_MAX_MEMORY_SIZE=1024)
+    def test_limite_nativo_rejeita_json_excessivo_antes_do_parser(self):
+        corpo = json.dumps({"conteudo": "x" * 1024}).encode("utf-8")
+        requisicao = RequestFactory().post("/login/", corpo, content_type="application/json")
+        with patch.object(JSONParser, "parse") as interpretar:
+            with self.assertRaises(RequestDataTooBig):
+                DRFRequest(requisicao, parsers=[JSONParser()]).data
         interpretar.assert_not_called()
 
     def test_rejeita_cr_e_lf_isolados_em_cabecalhos_sem_processar_requisicao(self):
@@ -571,7 +570,7 @@ class LoginGoogleTests(APITestCase):
             "family_name": "Silva",
         }
         verificador = patch(
-            "api.views.id_token.verify_oauth2_token", return_value=self.claims
+            "api.views.google.id_token.verify_oauth2_token", return_value=self.claims
         )
         self.verificador = verificador.start()
         self.addCleanup(verificador.stop)
@@ -787,7 +786,7 @@ class LoginGoogleTests(APITestCase):
             credencial_google_teste(cabecalho={"alg": "RS256", "kid": ""}),
             credencial_google_teste(cabecalho={"alg": "RS256", "kid": []}),
         )
-        with patch("api.views.GoogleRequest") as transporte:
+        with patch("api.views.google.GoogleRequest") as transporte:
             for credential in invalidas:
                 with self.subTest(credential=credential[:80]):
                     cache.clear()
@@ -897,7 +896,7 @@ class LoginGoogleTokensAssinadosTests(APITestCase):
 
     def setUp(self):
         cache.clear()
-        estado = patch("api.views._cache_certificados_google", None)
+        estado = patch("api.views.google._cache_certificados_google", None)
         estado.start()
         self.addCleanup(estado.stop)
         agora = int(time())
@@ -918,7 +917,7 @@ class LoginGoogleTokensAssinadosTests(APITestCase):
             status=200, data=json.dumps(self.certificados).encode("utf-8"),
             headers={"Cache-Control": "public, max-age=600"},
         )
-        with patch("api.views.GoogleRequest") as transporte:
+        with patch("api.views.google.GoogleRequest") as transporte:
             transporte.return_value.return_value = resposta_certificados
             resposta = self.client.post(
                 "/login/google/", {"credential": credential}, format="json"
@@ -968,7 +967,7 @@ class LoginGoogleTokensAssinadosTests(APITestCase):
             self.token({"iss": "https://atacante.example"}),
             self.token({"exp": int(time()) - 1}), desconhecida, desconhecida,
         )
-        with patch("api.views.GoogleRequest") as transporte:
+        with patch("api.views.google.GoogleRequest") as transporte:
             transporte.return_value.return_value = certificados
             for indice, credential in enumerate(credenciais):
                 with self.subTest(indice=indice):
@@ -1004,25 +1003,25 @@ class CertificadosGoogleTests(APITestCase):
             headers={"Cache-Control": "max-age=600", "Date": formatdate(self.agora, usegmt=True)},
         )
         for alvo, valor in (
-            ("api.views._cache_certificados_google", None),
-            ("api.views._trava_certificados_google", Lock()),
+            ("api.views.google._cache_certificados_google", None),
+            ("api.views.google._trava_certificados_google", Lock()),
         ):
             estado = patch(alvo, valor)
             estado.start()
             self.addCleanup(estado.stop)
-        transporte = patch("api.views.GoogleRequest")
+        transporte = patch("api.views.google.GoogleRequest")
         self.transporte = transporte.start()
         self.transporte.return_value.return_value = self.resposta
         self.addCleanup(transporte.stop)
-        relogio = patch("api.views.monotonic", return_value=100)
+        relogio = patch("api.views.google.monotonic", return_value=100)
         self.relogio = relogio.start()
         self.addCleanup(relogio.stop)
-        calendario = patch("api.views.time", return_value=self.agora)
+        calendario = patch("api.views.google.time", return_value=self.agora)
         calendario.start()
         self.addCleanup(calendario.stop)
 
     def requisitar(self, url="https://www.googleapis.com/oauth2/v1/certs", method="GET"):
-        from .views import _requisitar_certificados_google
+        from .views.google import _requisitar_certificados_google
         return _requisitar_certificados_google(url, method=method)
 
     def login_real(self):
@@ -1035,7 +1034,7 @@ class CertificadosGoogleTests(APITestCase):
         return self.client.post("/login/google/", {"credential": credential}, format="json")
 
     def test_validade_respeita_max_age_age_date_expires_e_duracao_da_consulta(self):
-        from .views import _validade_cache_google
+        from .views.google import _validade_cache_google
 
         casos = (
             ({"Cache-Control": "max-age=600"}, 598),
@@ -1057,7 +1056,7 @@ class CertificadosGoogleTests(APITestCase):
                 )
 
     def test_cabecalhos_sem_validade_ou_invalidos_nao_autorizam_cache(self):
-        from .views import _validade_cache_google
+        from .views.google import _validade_cache_google
 
         casos = (
             {}, {"Cache-Control": "public"}, {"Cache-Control": "no-store, max-age=600"},
@@ -1087,17 +1086,17 @@ class CertificadosGoogleTests(APITestCase):
         self.assertEqual(self.transporte.return_value.call_count, 2)
 
     def test_cache_valido_continua_disponivel_com_trava_ocupada(self):
-        from . import views
+        from .views import google
 
         primeira = self.requisitar()
-        with views._trava_certificados_google:
+        with google._trava_certificados_google:
             self.assertEqual(self.requisitar().data, primeira.data)
         self.assertEqual(self.transporte.return_value.call_count, 1)
 
     def test_sem_cache_explicito_cada_chamada_reconsulta_google(self):
         for headers in ({}, {"Cache-Control": "no-store, max-age=600"},
                         {"Cache-Control": "no-cache, max-age=600"}):
-            with self.subTest(headers=headers), patch("api.views._cache_certificados_google", None):
+            with self.subTest(headers=headers), patch("api.views.google._cache_certificados_google", None):
                 self.resposta.headers = headers
                 self.transporte.return_value.reset_mock()
                 self.requisitar()
@@ -1180,9 +1179,9 @@ class CertificadosGoogleTests(APITestCase):
         self.assertEqual(self.transporte.return_value.call_count, 1)
 
     def test_refresh_ocupado_retorna_503_sem_conta_e_recupera_apos_liberar(self):
-        from . import views
+        from .views import google
 
-        with views._trava_certificados_google:
+        with google._trava_certificados_google:
             resposta = self.login_real()
         self.assertEqual(resposta.status_code, 503)
         self.transporte.assert_not_called()
@@ -1230,13 +1229,13 @@ class LoginGoogleConcorrenciaTests(TransactionTestCase):
             finally:
                 close_old_connections()
 
-        with patch("api.views.id_token.verify_oauth2_token", side_effect=verificar):
+        with patch("api.views.google.id_token.verify_oauth2_token", side_effect=verificar):
             with ThreadPoolExecutor(max_workers=2) as executor:
                 tarefas = [executor.submit(enviar) for _ in range(2)]
                 respostas = [tarefa.result(timeout=15) for tarefa in tarefas]
         self.assertEqual(len({conexao for conexao, _, _ in respostas}), 2)
         self.assertTrue(all(status in (200, 503) for _, status, _ in respostas), respostas)
-        with patch("api.views.id_token.verify_oauth2_token", return_value=claims):
+        with patch("api.views.google.id_token.verify_oauth2_token", return_value=claims):
             repetida = self.client.post(
                 "/login/google/", {"credential": CREDENCIAL_GOOGLE_TESTE}, format="json"
             )
@@ -1299,8 +1298,9 @@ class TokenExpiracaoConcorrenciaTests(TransactionTestCase):
             "email_verified": True,
         }
         with (
-            patch("api.views.id_token.verify_oauth2_token", return_value=claims),
-            patch("api.views.obter_token_acesso", side_effect=obter_sincronizado),
+            patch("api.views.google.id_token.verify_oauth2_token", return_value=claims),
+            patch("api.views.usuarios.obter_token_acesso", side_effect=obter_sincronizado),
+            patch("api.views.google.obter_token_acesso", side_effect=obter_sincronizado),
             ThreadPoolExecutor(max_workers=2) as executor,
         ):
             tarefas = [executor.submit(enviar, tipo) for tipo in ("senha", "google")]
@@ -1695,16 +1695,16 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
         self.assertEqual(self.client.get("/chat/").status_code, 401)
 
     def test_logout_revoga_acesso_mesmo_com_cota_do_chat_esgotada(self):
-        with patch("api.views.ScopedRateThrottle.get_rate", return_value="1/min"):
+        with patch("api.views.chat.ScopedRateThrottle.get_rate", return_value="1/min"):
             self.assertEqual(self.client.get("/chat/").status_code, 200)
             self.assertEqual(self.client.get("/chat/").status_code, 429)
             self.assertEqual(self.client.post("/logout/").status_code, 204)
         self.assertFalse(Token.objects.filter(pk=self.token.pk).exists())
 
     def test_falha_de_publicacao_nao_perde_mensagem_confirmada_no_banco(self):
-        with patch("api.views.get_channel_layer") as camada:
+        with patch("api.views.chat.get_channel_layer") as camada:
             camada.return_value.group_send = AsyncMock(side_effect=ConnectionError())
-            with self.assertLogs("api.views", level="WARNING"):
+            with self.assertLogs("api.views.chat", level="WARNING"):
                 with self.captureOnCommitCallbacks(execute=True):
                     resposta = self.enviar_http()
         self.assertEqual(resposta.status_code, 201)
@@ -1712,15 +1712,15 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
 
     def test_falha_de_banco_vira_erro_recuperavel_sem_detalhes_internos(self):
         from django.db import OperationalError
-        with patch("api.views.enviar_mensagem", side_effect=OperationalError("detalhe interno")):
+        with patch("api.views.chat.enviar_mensagem", side_effect=OperationalError("detalhe interno")):
             resposta = self.enviar_http()
         self.assertEqual(resposta.status_code, 503)
         self.assertNotIn("detalhe interno", str(resposta.json()))
 
     def test_falha_em_um_grupo_nao_interrompe_publicacao_aos_demais(self):
-        with patch("api.views.get_channel_layer") as camada:
+        with patch("api.views.chat.get_channel_layer") as camada:
             camada.return_value.group_send = AsyncMock(side_effect=[ConnectionError(), None, None])
-            with self.assertLogs("api.views", level="WARNING"):
+            with self.assertLogs("api.views.chat", level="WARNING"):
                 publicar_evento((self.usuario.pk, self.operador.pk, self.operador2.pk), {"type": "teste"})
             self.assertEqual(camada.return_value.group_send.await_count, 3)
 
@@ -1747,7 +1747,7 @@ class ChatAssistenteHTTPTests(DadosChatMixin, APITestCase):
     def setUp(self):
         self.preparar_dados()
         geracao = patch(
-            "api.views.gerar_resposta", return_value="Henrique desenvolve projetos web."
+            "api.views.chat.gerar_resposta", return_value="Henrique desenvolve projetos web."
         )
         self.geracao = geracao.start()
         self.addCleanup(geracao.stop)
@@ -1758,7 +1758,7 @@ class ChatAssistenteHTTPTests(DadosChatMixin, APITestCase):
 
     def test_pergunta_e_resposta_sao_salvas_e_publicadas_sem_alterar_retorno_http(self):
         chave = uuid.uuid4()
-        with patch("api.views.publicar_evento") as publicar:
+        with patch("api.views.chat.publicar_evento") as publicar:
             with self.captureOnCommitCallbacks(execute=True):
                 resposta = self.enviar_http(
                     self.assistente, "  Quais projetos Henrique desenvolve?  ", chave
@@ -1830,7 +1830,7 @@ class ChatAssistenteHTTPTests(DadosChatMixin, APITestCase):
 
     def test_reenvio_nao_gera_resposta_nova_e_conflito_preserva_par_original(self):
         chave = uuid.uuid4()
-        with patch("api.views.publicar_evento") as publicar:
+        with patch("api.views.chat.publicar_evento") as publicar:
             with self.captureOnCommitCallbacks(execute=True):
                 primeira = self.enviar_http(self.assistente, "Quais projetos?", chave)
             with self.captureOnCommitCallbacks(execute=True):
@@ -1849,7 +1849,7 @@ class ChatAssistenteHTTPTests(DadosChatMixin, APITestCase):
 
         chave = uuid.uuid4()
         self.geracao.side_effect = AssistenteIndisponivel()
-        with patch("api.views.publicar_evento") as publicar:
+        with patch("api.views.chat.publicar_evento") as publicar:
             with self.captureOnCommitCallbacks(execute=True):
                 falha = self.enviar_http(self.assistente, "Quais projetos?", chave)
             self.assertEqual(falha.status_code, 503)
@@ -1876,9 +1876,9 @@ class ChatAssistenteHTTPTests(DadosChatMixin, APITestCase):
         self.assertEqual(self.enviar_http(self.assistente).status_code, 201)
 
     def test_falha_ao_salvar_resposta_reverte_pergunta_e_eventos(self):
-        with patch("api.views.publicar_evento") as publicar:
+        with patch("api.views.chat.publicar_evento") as publicar:
             with patch(
-                "api.views.registrar_resposta_assistente",
+                "api.views.chat.registrar_resposta_assistente",
                 side_effect=OperationalError("detalhe interno"),
             ):
                 with self.captureOnCommitCallbacks(execute=True):
@@ -1951,7 +1951,7 @@ class ChatConcorrenciaTests(DadosChatMixin, TransactionTestCase):
             finally:
                 close_old_connections()
 
-        with patch("api.views.gerar_resposta", side_effect=gerar) as geracao:
+        with patch("api.views.chat.gerar_resposta", side_effect=gerar) as geracao:
             with ThreadPoolExecutor(max_workers=1) as executor:
                 primeira = executor.submit(enviar)
                 try:
@@ -2014,7 +2014,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
                 "type": "mensagem.enviar", "conversa_id": str(self.assistente.pk),
                 "conteudo": "Quais projetos Henrique desenvolve?", "id_cliente": str(uuid.uuid4()),
             }
-            with patch("api.views.gerar_resposta", return_value="Henrique desenvolve projetos web.") as geracao:
+            with patch("api.views.chat.gerar_resposta", return_value="Henrique desenvolve projetos web.") as geracao:
                 await usuario.send_json_to(comando)
                 eventos = [await usuario.receive_json_from(timeout=2) for _ in range(3)]
                 criadas = [evento["mensagem"] for evento in eventos if evento["type"] == "mensagem.criada"]
@@ -2046,7 +2046,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
                 "type": "mensagem.enviar", "conversa_id": str(self.assistente.pk),
                 "conteudo": "Quais projetos?", "id_cliente": str(uuid.uuid4()),
             }
-            with patch("api.views.gerar_resposta", side_effect=AssistenteIndisponivel()):
+            with patch("api.views.chat.gerar_resposta", side_effect=AssistenteIndisponivel()):
                 await socket.send_json_to(comando)
                 erro = await socket.receive_json_from()
                 self.assertEqual(erro["type"], "erro")

@@ -19,7 +19,7 @@ from redis.exceptions import RedisError
 from .authentication import SessaoIndisponivel, expira_em, validar_token
 from .ia import assistente_ativo
 from .models import Conversa
-from .views import (
+from .views.chat import (
     ChatIndisponivel, WebsocketThrottle, assinatura_token, eh_operador,
     conversas_permitidas, enviar_mensagem, grupo_usuario, marcar_leitura,
 )

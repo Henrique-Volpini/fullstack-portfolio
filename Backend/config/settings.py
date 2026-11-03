@@ -76,13 +76,11 @@ INSTALLED_APPS = [
 CHAT_WEBSOCKET_AUTH_TIMEOUT = 10
 CHAT_WEBSOCKET_MAX_BYTES = 32768
 # Inclui a margem para 4.000 caracteres Unicode escapados e os campos do JSON.
-HTTP_REQUEST_MAX_BYTES = 64 * 1024
-DATA_UPLOAD_MAX_MEMORY_SIZE = HTTP_REQUEST_MAX_BYTES
+DATA_UPLOAD_MAX_MEMORY_SIZE = 64 * 1024
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'corsheaders.middleware.CorsMiddleware',
-    'api.views.LimiteCorpoHTTPMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -101,7 +99,7 @@ AXES_FAILURE_LIMIT = 5
 AXES_COOLOFF_TIME = timedelta(minutes=15)
 AXES_LOCKOUT_PARAMETERS = ["username"]
 AXES_RESET_COOL_OFF_ON_FAILURE_DURING_LOCKOUT = False
-AXES_LOCKOUT_CALLABLE = "api.views.resposta_bloqueio"
+AXES_LOCKOUT_CALLABLE = "api.views.usuarios.resposta_bloqueio"
 
 CORS_ALLOWED_ORIGINS = [
     origin.strip()
