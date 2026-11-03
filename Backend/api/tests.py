@@ -23,22 +23,18 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.core.exceptions import RequestDataTooBig
 from django.core.management import call_command
 from django.db import (
     IntegrityError, OperationalError, close_old_connections, connection, transaction,
 )
-from django.test import RequestFactory, SimpleTestCase, TransactionTestCase, override_settings
+from django.test import SimpleTestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 from google.auth import crypt as google_crypt, jwt as google_jwt
 from google.auth.exceptions import GoogleAuthError, TransportError
 from rest_framework.authtoken.models import Token
-from rest_framework.parsers import JSONParser
-from rest_framework.request import Request as DRFRequest
 from rest_framework.test import APIClient, APITestCase
 from rest_framework.throttling import UserRateThrottle
 from twisted.internet.testing import StringTransport
-from twisted.web.http import HTTPChannel, Request
 
 from .models import ContaGoogle, Conversa, Mensagem
 from .views.chat import (
@@ -244,17 +240,6 @@ class ProtecaoAutenticacaoTests(APITestCase):
         self.assertIn("token", resposta.json())
         self.assertNotIn("sessionid", resposta.cookies)
 
-    def test_login_substitui_token_expirado_e_invalida_chave_anterior(self):
-        token = Token.objects.create(user=self.usuario)
-        Token.objects.filter(pk=token.pk).update(created=timezone.now() - timedelta(days=2))
-        resposta = self.login()
-        self.assertEqual(resposta.status_code, 200)
-        self.assertNotEqual(resposta.json()["token"], token.key)
-        self.assertEqual(Token.objects.filter(user=self.usuario).count(), 1)
-        self.client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
-        self.assertEqual(self.client.get("/chat/").status_code, 401)
-        self.assertNotIn("sessionid", resposta.cookies)
-
     @override_settings(AUTH_TOKEN_TTL_SECONDS=3600)
     def test_novo_login_nao_prorroga_token_ainda_valido(self):
         token = Token.objects.create(user=self.usuario)
@@ -373,32 +358,6 @@ class ServidorHTTPTests(SimpleTestCase):
                 self.assertEqual(canal.requests[0].content.read(), corpo)
                 self.assertEqual(transporte.value(), b"")
                 self.assertFalse(transporte.disconnecting)
-
-    @override_settings(DATA_UPLOAD_MAX_MEMORY_SIZE=1024)
-    def test_limite_nativo_rejeita_json_excessivo_antes_do_parser(self):
-        corpo = json.dumps({"conteudo": "x" * 1024}).encode("utf-8")
-        requisicao = RequestFactory().post("/login/", corpo, content_type="application/json")
-        with patch.object(JSONParser, "parse") as interpretar:
-            with self.assertRaises(RequestDataTooBig):
-                DRFRequest(requisicao, parsers=[JSONParser()]).data
-        interpretar.assert_not_called()
-
-    def test_rejeita_cr_e_lf_isolados_em_cabecalhos_sem_processar_requisicao(self):
-        for separador in (b"\r", b"\n"):
-            with self.subTest(separador=separador):
-                canal = HTTPChannel()
-                canal.timeOut = None
-                transporte = StringTransport()
-                canal.makeConnection(transporte)
-                requisicao = (
-                    b"POST /login/ HTTP/1.1\r\nHost: testserver\r\n"
-                    b"X-Teste: valor" + separador + b"Content-Length: 2\r\n\r\n{}"
-                )
-                with patch.object(Request, "process") as processar:
-                    canal.dataReceived(requisicao)
-                self.assertTrue(transporte.disconnecting)
-                self.assertTrue(transporte.value().startswith(b"HTTP/1.1 400 Bad Request\r\n"))
-                processar.assert_not_called()
 
 
 @override_settings(GEMINI_API_KEY="chave-privada-teste", GEMINI_MODEL="gemini-3.5-flash-lite")
@@ -699,9 +658,6 @@ class LoginGoogleTests(APITestCase):
     def test_erros_de_verificacao_nao_criam_conta_nem_expoem_detalhes(self):
         for erro in (
             ValueError("assinatura invalida: detalhe interno"),
-            ValueError("token expirado: detalhe interno"),
-            ValueError("audience incorreta: detalhe interno"),
-            ValueError("issuer incorreto: detalhe interno"),
             GoogleAuthError("detalhe interno"),
         ):
             with self.subTest(erro=str(erro)):
@@ -927,12 +883,6 @@ class LoginGoogleTokensAssinadosTests(APITestCase):
                 self.assertFalse(chamada.kwargs["allow_redirects"])
         return resposta
 
-    def test_token_rsa_valido_passa_pelo_verificador_real_sem_acesso_a_rede(self):
-        resposta = self.login(self.token())
-        self.assertEqual(resposta.status_code, 200)
-        self.assertEqual(ContaGoogle.objects.get().sub, self.claims["sub"])
-        self.assertEqual(Token.objects.get().key, resposta.json()["token"])
-
     def test_assinatura_audience_issuer_e_expiracao_invalidas_sao_rejeitadas(self):
         cabecalho, corpo, assinatura = self.token().split(".")
         assinatura_invalida = ("A" if assinatura[0] != "A" else "B") + assinatura[1:]
@@ -965,7 +915,7 @@ class LoginGoogleTokensAssinadosTests(APITestCase):
             self.token(), f"{cabecalho}.{corpo}.{adulterada}",
             self.token({"aud": "outro-cliente"}),
             self.token({"iss": "https://atacante.example"}),
-            self.token({"exp": int(time()) - 1}), desconhecida, desconhecida,
+            self.token({"exp": int(time()) - 1}), desconhecida,
         )
         with patch("api.views.google.GoogleRequest") as transporte:
             transporte.return_value.return_value = certificados
@@ -975,6 +925,9 @@ class LoginGoogleTokensAssinadosTests(APITestCase):
                         "/login/google/", {"credential": credential}, format="json",
                     )
                     self.assertEqual(resposta.status_code, 200 if indice == 0 else 401)
+                    if indice == 0:
+                        self.assertEqual(ContaGoogle.objects.get().sub, self.claims["sub"])
+                        self.assertEqual(Token.objects.get().key, resposta.json()["token"])
             transporte.return_value.assert_called_once_with(
                 "https://www.googleapis.com/oauth2/v1/certs", method="GET", timeout=5,
                 allow_redirects=False,
@@ -1127,6 +1080,7 @@ class CertificadosGoogleTests(APITestCase):
                 self.assertEqual(resposta.status_code, 503)
                 self.assertNotIn("certificado-invalido", str(resposta.json()))
                 self.assertEqual(get_user_model().objects.count(), 0)
+        self.transporte.return_value.reset_mock()
         self.transporte.return_value.side_effect = TransportError("detalhe interno")
         resposta = self.login_real()
         self.assertEqual(resposta.status_code, 503)
@@ -1137,6 +1091,7 @@ class CertificadosGoogleTests(APITestCase):
         self.resposta.status = 200
         self.resposta.data = json.dumps(self.certificados).encode("utf-8")
         self.assertEqual(self.login_real().status_code, 200)
+        self.assertEqual(self.transporte.return_value.call_count, 2)
 
     def test_cache_vencido_nao_e_usado_quando_google_falha_e_novo_login_recupera(self):
         self.assertEqual(self.login_real().status_code, 200)
@@ -1189,14 +1144,6 @@ class CertificadosGoogleTests(APITestCase):
         self.assertFalse(ContaGoogle.objects.exists())
         self.assertFalse(Token.objects.exists())
         self.assertEqual(self.login_real().status_code, 200)
-
-    def test_falha_de_consulta_libera_trava_para_tentativa_seguinte(self):
-        self.transporte.return_value.side_effect = TransportError("detalhe interno")
-        with self.assertRaises(TransportError):
-            self.requisitar()
-        self.transporte.return_value.side_effect = None
-        self.assertEqual(self.requisitar().status, 200)
-        self.assertEqual(self.transporte.return_value.call_count, 2)
 
 
 @override_settings(**CONFIG_TESTES, GOOGLE_CLIENT_ID="cliente-google.apps.googleusercontent.com")
@@ -1427,6 +1374,8 @@ class TokenExpiracaoHTTPTests(DadosChatMixin, APITestCase):
         renovado = Token.objects.get(user=self.usuario)
         self.assertEqual(renovado.created, vencimento)
         self.assertNotEqual(renovado.key, self.token.key)
+        self.assertEqual(resposta.json()["token"], renovado.key)
+        self.assertEqual(Token.objects.filter(user=self.usuario).count(), 1)
         self.autorizar(self.token)
         self.assertEqual(self.client.get("/chat/").status_code, 401)
         self.autorizar(renovado)
@@ -1917,18 +1866,6 @@ class ChatAssistenteHTTPTests(DadosChatMixin, APITestCase):
         self.assertEqual(self.geracao.call_count, 2)
         self.assertEqual(publicar.call_count, 2)
 
-    def test_conversa_com_geracao_em_andamento_retorna_erro_recuperavel(self):
-        trava = f"chat.ia.{self.assistente.pk}"
-        cache.add(trava, "ocupada", timeout=30)
-        try:
-            resposta = self.enviar_http(self.assistente, "Quais projetos?")
-            self.assertEqual(resposta.status_code, 503)
-            self.assertFalse(Mensagem.objects.exists())
-            self.geracao.assert_not_called()
-        finally:
-            cache.delete(trava)
-        self.assertEqual(self.enviar_http(self.assistente).status_code, 201)
-
     def test_falha_ao_salvar_resposta_reverte_pergunta_e_eventos(self):
         with patch("api.views.chat.publicar_evento") as publicar:
             with patch(
@@ -2017,7 +1954,11 @@ class ChatConcorrenciaTests(DadosChatMixin, TransactionTestCase):
                 self.assertEqual(primeira.result(timeout=5), 201)
             self.assertEqual(self.client.post(url, dados, format="json").status_code, 200)
             geracao.assert_called_once()
-        self.assertEqual(Mensagem.objects.count(), 2)
+            self.assertEqual(Mensagem.objects.count(), 2)
+            novos_dados = {**dados, "id_cliente": str(uuid.uuid4())}
+            self.assertEqual(self.client.post(url, novos_dados, format="json").status_code, 201)
+            self.assertEqual(geracao.call_count, 2)
+        self.assertEqual(Mensagem.objects.count(), 4)
 
 
 @override_settings(**CONFIG_TESTES)

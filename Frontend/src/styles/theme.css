@@ -2,7 +2,6 @@
   --color-background: #07111f;
   --color-background-secondary: #0a1726;
   --color-background-elevated: #0d1d2d;
-  --color-background-subtle: rgba(17, 38, 58, 0.72);
   --color-background-transparent: rgba(7, 17, 31, 0);
 
   --color-text-primary: #f1f7fb;
@@ -47,7 +46,6 @@
   --color-background: #0a3a8c;
   --color-background-secondary: #082f73;
   --color-background-elevated: #0d449f;
-  --color-background-subtle: rgba(255, 255, 255, 0.08);
   --color-background-transparent: rgba(10, 58, 140, 0);
 
   --color-text-primary: #ffffff;
@@ -85,7 +83,6 @@
   --color-background: #f4f0e6;
   --color-background-secondary: #ebe5d6;
   --color-background-elevated: #fbf8f0;
-  --color-background-subtle: rgba(255, 255, 255, 0.6);
   --color-background-transparent: rgba(244, 240, 230, 0);
 
   --color-text-primary: #16212c;
@@ -123,7 +120,6 @@
   --color-background: #110f22;
   --color-background-secondary: #0d0b1b;
   --color-background-elevated: #181533;
-  --color-background-subtle: rgba(33, 28, 70, 0.72);
   --color-background-transparent: rgba(17, 15, 34, 0);
 
   --color-text-primary: #f3f0fb;

@@ -103,7 +103,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                 return
             self.eventos_recebidos.append(agora)
             dados = json.loads(text_data or "")
-        except (ValueError, RecursionError, UnicodeError):
+        except (ValueError, RecursionError):
             await self._erro(ValidationError("JSON inválido."))
             if self.usuario is None:
                 await self._fechar(4401)
@@ -157,7 +157,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                 await self._fechar(4401)
         except DatabaseError:
             await self._erro(ChatIndisponivel(), dados)
-        except (OSError, TimeoutError, RedisError):
+        except (OSError, RedisError):
             await self._erro(ChatIndisponivel(), dados)
             await self._fechar(1013)
 

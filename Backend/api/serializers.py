@@ -30,7 +30,7 @@ class LoginGoogleSerializer(serializers.Serializer):
                 or not isinstance(cabecalho.get("kid"), str) or not cabecalho["kid"].strip()
             ):
                 raise ValueError
-        except (ErroValidacaoDjango, ValueError, GoogleAuthError, UnicodeError, RecursionError):
+        except (ErroValidacaoDjango, ValueError, GoogleAuthError, RecursionError):
             raise serializers.ValidationError("Informe uma credencial Google no formato JWT válido.") from None
         # Os dados decodificados não são confiáveis até a verificação criptográfica.
         return credential

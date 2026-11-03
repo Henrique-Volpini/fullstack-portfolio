@@ -355,7 +355,7 @@ function Home() {
             <span className="hero-eyebrow">Full-stack developer</span>
 
             <h1 className="hero-title" id="home-title">
-              <span className="hero-title-first">Henrique</span>
+              <span>Henrique</span>
               <span className="hero-title-last">Volpini</span>
             </h1>
 
@@ -368,7 +368,6 @@ function Home() {
               <span aria-hidden="true">·</span> TypeScript{" "}
               <span aria-hidden="true">·</span> Python
             </p>
-
           </div>
 
           <div className="hero-photo-wrapper">

@@ -102,7 +102,7 @@ def _requisitar_certificados_google(url, method="GET"):
         if prazo > 0:
             _cache_certificados_google = (dados, fim + prazo)
         return SimpleNamespace(status=200, data=dados)
-    except (ValueError, TypeError, UnicodeError, RecursionError):
+    except (ValueError, TypeError, RecursionError):
         raise TransportError("Resposta de certificados inválida.") from None
     finally:
         _trava_certificados_google.release()

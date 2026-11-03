@@ -696,8 +696,6 @@ function Chat({
       className="chat"
       data-mode={mode}
       data-minimized={minimized}
-      data-operator={operator}
-      data-state={state.phase}
     >
       <header className="chat-top">
         <div className="chat-id">
