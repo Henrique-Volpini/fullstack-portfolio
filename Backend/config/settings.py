@@ -75,10 +75,14 @@ INSTALLED_APPS = [
 
 CHAT_WEBSOCKET_AUTH_TIMEOUT = 10
 CHAT_WEBSOCKET_MAX_BYTES = 32768
+# Inclui a margem para 4.000 caracteres Unicode escapados e os campos do JSON.
+HTTP_REQUEST_MAX_BYTES = 64 * 1024
+DATA_UPLOAD_MAX_MEMORY_SIZE = HTTP_REQUEST_MAX_BYTES
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'corsheaders.middleware.CorsMiddleware',
+    'api.views.LimiteCorpoHTTPMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',

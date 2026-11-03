@@ -12,7 +12,7 @@ from threading import Barrier, Event, Lock
 from time import time
 from types import SimpleNamespace
 from unittest import addModuleCleanup
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 from urllib.parse import urlsplit
 
 from channels.db import database_sync_to_async
@@ -278,6 +278,112 @@ CONFIG_TESTES = {
 
 
 class ServidorHTTPTests(SimpleTestCase):
+    def abrir_canal_daphne(self):
+        from daphne.http_protocol import HTTPFactory
+        from config.asgi import RequisicaoHTTPLimitada
+
+        servidor = SimpleNamespace(
+            protocol_connected=Mock(), protocol_disconnected=Mock(),
+        )
+        fabrica = HTTPFactory(servidor)
+        fabrica.timeOut = None
+        canal = fabrica.buildProtocol(None)
+        self.assertIs(canal.requestFactory, RequisicaoHTTPLimitada)
+        transporte = StringTransport()
+        canal.makeConnection(transporte)
+        self.addCleanup(canal.connectionLost, None)
+        return canal._channel, transporte
+
+    def test_rejeita_corpo_declarado_grande_antes_de_receber_bytes(self):
+        from config.asgi import RequisicaoHTTPLimitada
+
+        canal, transporte = self.abrir_canal_daphne()
+        with patch.object(RequisicaoHTTPLimitada, "process") as processar:
+            canal.dataReceived(
+                b"POST /login/ HTTP/1.1\r\nHost: testserver\r\n"
+                b"Expect: 100-continue\r\nContent-Length: "
+                + str(settings.HTTP_REQUEST_MAX_BYTES + 1).encode() + b"\r\n\r\n"
+            )
+        self.assertIn(b" 413 ", transporte.value().split(b"\r\n", 1)[0])
+        self.assertNotIn(b"100 Continue", transporte.value())
+        self.assertTrue(transporte.disconnecting)
+        self.assertTrue(canal.requests[0].content.closed)
+        processar.assert_not_called()
+
+    def test_chunked_conta_bytes_e_interrompe_ao_exceder_sem_content_length(self):
+        from config.asgi import RequisicaoHTTPLimitada
+
+        canal, transporte = self.abrir_canal_daphne()
+        limite = settings.HTTP_REQUEST_MAX_BYTES
+        with patch.object(RequisicaoHTTPLimitada, "process") as processar:
+            canal.dataReceived(
+                b"POST /login/ HTTP/1.1\r\nHost: testserver\r\n"
+                b"Transfer-Encoding: chunked\r\n\r\n"
+            )
+            # Uma única unidade chunked recebida em partes, ainda sem terminador.
+            canal.dataReceived(f"{limite + 1000:x}\r\n".encode() + b"x" * limite)
+            self.assertEqual(canal.requests[0].content.tell(), limite)
+            self.assertEqual(transporte.value(), b"")
+            canal.dataReceived(b"x")
+            self.assertIn(b" 413 ", transporte.value().split(b"\r\n", 1)[0])
+            self.assertTrue(transporte.disconnecting)
+            self.assertTrue(canal.requests[0].content.closed)
+            # Dados que já estavam em trânsito não podem reabrir o processamento.
+            canal.dataReceived(b"x" * 999 + b"\r\n0\r\n\r\n")
+        self.assertEqual(transporte.value().count(b" 413 "), 1)
+        processar.assert_not_called()
+
+    def test_corpo_excessivo_no_mesmo_pacote_dos_cabecalhos_nao_e_armazenado(self):
+        from config.asgi import RequisicaoHTTPLimitada
+
+        canal, transporte = self.abrir_canal_daphne()
+        corpo = b"x" * (settings.HTTP_REQUEST_MAX_BYTES + 1)
+        with patch.object(RequisicaoHTTPLimitada, "process") as processar:
+            canal.dataReceived(
+                b"POST /login/ HTTP/1.1\r\nHost: testserver\r\n"
+                + f"Content-Length: {len(corpo)}\r\n\r\n".encode() + corpo
+            )
+        self.assertIn(b" 413 ", transporte.value().split(b"\r\n", 1)[0])
+        self.assertTrue(canal.requests[0].content.closed)
+        self.assertTrue(transporte.disconnecting)
+        processar.assert_not_called()
+
+    def test_aceita_corpo_exatamente_no_limite_com_e_sem_content_length(self):
+        from config.asgi import RequisicaoHTTPLimitada
+
+        corpo = b"x" * settings.HTTP_REQUEST_MAX_BYTES
+        for chunked in (False, True):
+            with self.subTest(chunked=chunked):
+                canal, transporte = self.abrir_canal_daphne()
+                if chunked:
+                    cabecalho = b"Transfer-Encoding: chunked\r\n"
+                    dados = f"{len(corpo):x}\r\n".encode() + corpo + b"\r\n0\r\n\r\n"
+                else:
+                    cabecalho = f"Content-Length: {len(corpo)}\r\n".encode()
+                    dados = corpo
+                with patch.object(RequisicaoHTTPLimitada, "process") as processar:
+                    canal.dataReceived(
+                        b"POST /login/ HTTP/1.1\r\nHost: testserver\r\n"
+                        + cabecalho + b"\r\n" + dados
+                    )
+                processar.assert_called_once()
+                self.assertEqual(canal.requests[0].content.read(), corpo)
+                self.assertEqual(transporte.value(), b"")
+                self.assertFalse(transporte.disconnecting)
+
+    def test_middleware_rejeita_excesso_antes_do_parser_nos_endpoints_http(self):
+        corpo = b"x" * (settings.HTTP_REQUEST_MAX_BYTES + 1)
+        with patch("rest_framework.parsers.JSONParser.parse") as interpretar:
+            for caminho in (
+                "/login/", "/login/google/", "/usuarios/", "/chat/conversas/",
+                f"/chat/conversas/{uuid.uuid4()}/mensagens/",
+            ):
+                with self.subTest(caminho=caminho):
+                    resposta = self.client.post(caminho, corpo, content_type="application/json")
+                    self.assertEqual(resposta.status_code, 413)
+                    self.assertEqual(resposta.json()["detail"], "Corpo da requisição muito grande.")
+        interpretar.assert_not_called()
+
     def test_rejeita_cr_e_lf_isolados_em_cabecalhos_sem_processar_requisicao(self):
         for separador in (b"\r", b"\n"):
             with self.subTest(separador=separador):
@@ -1366,6 +1472,19 @@ class TokenExpiracaoHTTPTests(DadosChatMixin, APITestCase):
 class ChatHTTPTests(DadosChatMixin, APITestCase):
     def setUp(self):
         self.preparar_dados()
+
+    def test_limite_bruto_preserva_4000_caracteres_unicode_escapados_no_json(self):
+        conteudo = "\U0001f600" * 4000
+        corpo = json.dumps({
+            "conteudo": conteudo, "id_cliente": str(uuid.uuid4()),
+        }, ensure_ascii=True).encode("ascii")
+        resposta = self.client.post(
+            f"/chat/conversas/{self.conversa.pk}/mensagens/", corpo,
+            content_type="application/json",
+        )
+        self.assertEqual(resposta.status_code, 201)
+        self.assertEqual(resposta.json()["conteudo"], conteudo)
+        self.assertEqual(Mensagem.objects.get().conteudo, conteudo)
 
     def test_chat_exige_token_e_identifica_papel_sem_depender_do_nome(self):
         self.client.credentials()
