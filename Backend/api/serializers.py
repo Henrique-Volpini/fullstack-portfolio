@@ -9,7 +9,6 @@ from google.auth import jwt as google_jwt
 from google.auth.exceptions import GoogleAuthError
 from rest_framework import serializers
 
-from .ia import BASE_PORTFOLIO
 from .models import Conversa, Mensagem
 
 
@@ -172,14 +171,6 @@ class EnviarMensagemSerializer(EntradaChatSerializer):
         if not isinstance(self.initial_data.get("conteudo"), str):
             raise serializers.ValidationError("Envie uma mensagem de texto.")
         return conteudo
-
-
-class RespostaIASerializer(EntradaChatSerializer):
-    topicos = serializers.ListField(
-        child=serializers.ChoiceField(choices=tuple(BASE_PORTFOLIO)),
-        max_length=3,
-        allow_empty=True,
-    )
 
 
 class MarcarLeituraSerializer(EntradaChatSerializer):

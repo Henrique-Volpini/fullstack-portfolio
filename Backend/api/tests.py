@@ -373,25 +373,28 @@ class GeminiTests(SimpleTestCase):
         self.resposta = self.sessao.post.return_value
         self.resposta.status_code = 200
         self.historico = [{"role": "user", "parts": [{"text": "Quais tecnologias utiliza?"}]}]
-        self.selecao({"topicos": ["stack"]})
+        self.texto_resposta = "Henrique usa Python e Django no backend e React com TypeScript no frontend."
+        self.simular_resposta(self.texto_resposta)
 
-    def selecao(self, dados):
+    def simular_resposta(self, texto):
         self.resposta.json.return_value = {
             "candidates": [{
                 "finishReason": "STOP",
-                "content": {"parts": [{"text": json.dumps(dados)}]},
+                "content": {"parts": [{"text": texto}]},
             }],
         }
 
-    def test_resposta_contem_apenas_textos_aprovados_sem_repetir_topicos(self):
-        self.selecao({"topicos": ["stack", "experiencia", "stack"]})
-        resposta = self.ia.gerar_resposta(self.historico)
-        self.assertEqual(
-            resposta,
-            "\n\n".join(self.ia.BASE_PORTFOLIO[topico] for topico in ("stack", "experiencia")),
+    def test_respostas_redigidas_pelo_modelo_nao_sao_substituidas_por_blocos_fixos(self):
+        respostas = (
+            self.texto_resposta,
+            "A base de Henrique é Python com Django; no frontend, ele trabalha com React e TypeScript.",
         )
+        for resposta in respostas:
+            with self.subTest(resposta=resposta):
+                self.simular_resposta(resposta)
+                self.assertEqual(self.ia.gerar_resposta(self.historico), resposta)
 
-    def test_requisicao_usa_schema_historico_limitado_e_chave_somente_no_cabecalho(self):
+    def test_requisicao_usa_texto_historico_limitado_e_chave_somente_no_cabecalho(self):
         historico = [
             {"role": "user", "parts": [{"text": f"Pergunta {numero}"}]}
             for numero in range(self.ia.LIMITE_HISTORICO + 5)
@@ -410,40 +413,30 @@ class GeminiTests(SimpleTestCase):
         self.assertEqual(opcoes["timeout"], self.ia.TIMEOUT_GEMINI)
         self.assertFalse(opcoes["allow_redirects"])
         configuracao = opcoes["json"]["generationConfig"]
-        self.assertEqual(configuracao["responseMimeType"], "application/json")
-        schema = configuracao["responseSchema"]
-        self.assertEqual(schema["required"], ["topicos"])
-        self.assertEqual(schema["properties"]["topicos"]["maxItems"], 3)
-        self.assertEqual(
-            schema["properties"]["topicos"]["items"]["enum"], list(self.ia.BASE_PORTFOLIO)
+        self.assertNotIn("responseMimeType", configuracao)
+        self.assertNotIn("responseSchema", configuracao)
+        self.assertNotIn("temperature", configuracao)
+
+    def test_recusa_redigida_pelo_modelo_e_preservada(self):
+        resposta = "Só posso ajudar com as informações profissionais do portfólio de Henrique."
+        self.simular_resposta(resposta)
+        self.assertEqual(self.ia.gerar_resposta(self.historico), resposta)
+
+    def test_textos_invalidos_nao_sao_publicados(self):
+        textos = (
+            "", "  ", "x" * 4001, "Texto com \x00", "Texto com \ud800",
+            None, 123, True, {}, [],
         )
-
-    def test_lista_vazia_de_topicos_retorna_mensagem_fora_do_escopo(self):
-        self.selecao({"topicos": []})
-        self.assertEqual(self.ia.gerar_resposta(self.historico), self.ia.RESPOSTA_FORA_ESCOPO)
-
-    def test_topicos_invalidos_texto_livre_e_campos_extras_nao_sao_publicados(self):
-        selecoes = (
-            {"topicos": ["vida_pessoal"]},
-            {"topicos": ["stack"], "resposta": "Texto livre não autorizado."},
-            {"resposta": "Texto livre não autorizado."},
-            {"topicos": "stack"}, {"topicos": None}, {"topicos": [123]},
-            {"topicos": list(self.ia.BASE_PORTFOLIO)[:4]}, {}, [], None,
-        )
-        for selecao in selecoes:
-            with self.subTest(selecao=selecao):
-                self.selecao(selecao)
-                with self.assertRaises(self.ia.AssistenteIndisponivel):
-                    self.ia.gerar_resposta(self.historico)
-
-    def test_texto_vazio_json_invalido_e_markdown_sao_rejeitados(self):
-        for texto in ("", "  ", "Texto sem JSON.", "{", '```json\n{"topicos":["stack"]}\n```'):
+        for texto in textos:
             with self.subTest(texto=texto):
-                self.resposta.json.return_value = {"candidates": [{
-                    "finishReason": "STOP", "content": {"parts": [{"text": texto}]}},
-                ]}
+                self.simular_resposta(texto)
                 with self.assertRaises(self.ia.AssistenteIndisponivel):
                     self.ia.gerar_resposta(self.historico)
+
+    def test_texto_no_limite_e_espacos_externos_sao_aceitos(self):
+        texto = "x" * 4000
+        self.simular_resposta(f"  {texto}\n")
+        self.assertEqual(self.ia.gerar_resposta(self.historico), texto)
 
     def test_resposta_malformada_do_provedor_vira_erro_controlado(self):
         respostas = (
@@ -491,19 +484,20 @@ class GeminiTests(SimpleTestCase):
     def test_geracao_truncada_ou_nao_concluida_nao_publica_resposta_parcial(self):
         for motivo in ("MAX_TOKENS", "OTHER", None):
             with self.subTest(motivo=motivo):
-                self.selecao({"topicos": ["stack"]})
+                self.simular_resposta(self.texto_resposta)
                 self.resposta.json.return_value["candidates"][0]["finishReason"] = motivo
                 with self.assertRaises(self.ia.AssistenteIndisponivel):
                     self.ia.gerar_resposta(self.historico)
 
-    def test_partes_de_raciocinio_nao_entram_na_selecao_publica(self):
+    def test_partes_de_raciocinio_nao_entram_na_resposta_publica(self):
         self.resposta.json.return_value = {"candidates": [{
             "finishReason": "STOP", "content": {"parts": [
                 {"thought": True, "text": "Texto interno não autorizado."},
-                {"text": '{"topicos":'}, {"text": '["stack"]}'},
+                {"text": "Henrique usa Python e Django no backend "},
+                {"text": "e React com TypeScript no frontend."},
             ]},
         }]}
-        self.assertEqual(self.ia.gerar_resposta(self.historico), self.ia.BASE_PORTFOLIO["stack"])
+        self.assertEqual(self.ia.gerar_resposta(self.historico), self.texto_resposta)
 
     def test_sem_chave_ou_com_modelo_invalido_nao_consulta_rede(self):
         with override_settings(GEMINI_API_KEY=""):
