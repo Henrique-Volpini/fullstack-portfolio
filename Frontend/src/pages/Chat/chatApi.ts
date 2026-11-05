@@ -1,8 +1,11 @@
 export const apiUrl = (import.meta.env.VITE_API_URL?.trim() || "/api").replace(/\/+$/, "");
 
+// Com quem o visitante conversa: o Henrique ou o assistente de IA.
 export type Destinatario = "henrique" | "assistente";
+// Quem escreveu a mensagem.
 export type Origem = "usuario" | "henrique" | "assistente";
 
+// Mensagem do chat como a API a devolve.
 export type Mensagem = {
   id: number;
   conversa_id: string;
@@ -13,6 +16,7 @@ export type Mensagem = {
   criada_em: string;
 };
 
+// Conversa entre um visitante e um destinatário, com não lidas e marcadores de leitura.
 export type Conversa = {
   id: string;
   usuario: { id: number; username: string };
@@ -26,6 +30,7 @@ export type Conversa = {
   ultima_lida_henrique: number;
 };
 
+// Perfil do usuário logado: se é operador, destinatários disponíveis e caminho do WebSocket.
 export type Perfil = {
   usuario: { id: number; username: string };
   operador: boolean;
@@ -34,8 +39,10 @@ export type Perfil = {
   websocket_path: string;
 };
 
+// Resposta paginada da API.
 export type Pagina<T> = { next: string | null; previous: string | null; results: T[] };
 
+// Erro de requisição à API, com o status HTTP e uma mensagem pronta para o usuário.
 export class ApiError extends Error {
   status: number;
 
@@ -46,6 +53,7 @@ export class ApiError extends Error {
   }
 }
 
+// Extrai o campo detail de uma resposta de erro, se existir.
 function apiDetail(data: unknown): string | null {
   if (data && typeof data === "object" && "detail" in data && typeof data.detail === "string") {
     return data.detail;
@@ -53,6 +61,7 @@ function apiDetail(data: unknown): string | null {
   return null;
 }
 
+// Converte o status HTTP de uma falha em mensagem amigável.
 function describeStatus(status: number, data: unknown, retryAfter: string | null): string {
   if (status === 401) return "Sua sessão expirou. Entre novamente.";
   if (status === 400 && data && typeof data === "object" && "conteudo" in data) {
@@ -72,8 +81,10 @@ function describeStatus(status: number, data: unknown, retryAfter: string | null
   return "Não foi possível concluir a solicitação.";
 }
 
+// Opções de uma chamada à API.
 type RequestOptions = { method?: "GET" | "POST"; body?: unknown; signal?: AbortSignal };
 
+// Faz a chamada autenticada à API com limite de 15 s e devolve o JSON ou lança ApiError.
 async function request<T>(
   token: string,
   path: string,
@@ -111,14 +122,17 @@ async function request<T>(
   return data as T;
 }
 
+// Reduz a URL da próxima página devolvida pela API a caminho e query.
 function relativeUrl(url: string): string {
   const parsed = new URL(url, window.location.href);
   return `${parsed.pathname}${parsed.search}`;
 }
 
+// Busca o perfil do usuário logado.
 export const getPerfil = (token: string, signal?: AbortSignal) =>
   request<Perfil>(token, "/chat/", { signal });
 
+// Lista as conversas (50 por página), com filtro por destinatário ou cursor da próxima página.
 export function listConversas(
   token: string,
   options: { destinatario?: Destinatario; next?: string | null; signal?: AbortSignal } = {},
@@ -129,12 +143,15 @@ export function listConversas(
   return request<Pagina<Conversa>>(token, path, { signal: options.signal });
 }
 
+// Abre (ou recupera) a conversa do usuário com um destinatário.
 export const abrirConversa = (token: string, destinatario: Destinatario, signal?: AbortSignal) =>
   request<Conversa>(token, "/chat/conversas/", { method: "POST", body: { destinatario }, signal });
 
+// Busca uma conversa pelo id.
 export const getConversa = (token: string, id: string, signal?: AbortSignal) =>
   request<Conversa>(token, `/chat/conversas/${id}/`, { signal });
 
+// Lista as mensagens de uma conversa, por página ou só as posteriores a um id.
 export function getMensagens(
   token: string,
   conversaId: string,
@@ -148,6 +165,7 @@ export function getMensagens(
   return request<Pagina<Mensagem>>(token, path, { signal: options.signal });
 }
 
+// Envia uma mensagem; o id do cliente evita duplicação em reenvios.
 export const enviarMensagem = (
   token: string,
   conversaId: string,
@@ -161,6 +179,7 @@ export const enviarMensagem = (
     signal,
   });
 
+// Marca a conversa como lida até uma mensagem.
 export const marcarLida = (token: string, conversaId: string, mensagemId: number, signal?: AbortSignal) =>
   request<{ por: "usuario" | "henrique"; mensagem_id: number }>(
     token,
@@ -168,9 +187,11 @@ export const marcarLida = (token: string, conversaId: string, mensagemId: number
     { method: "POST", body: { mensagem_id: mensagemId }, signal },
   );
 
+// Encerra a sessão revogando o token no servidor.
 export const encerrarSessao = (token: string, signal?: AbortSignal) =>
   request<null>(token, "/logout/", { method: "POST", signal });
 
+// Monta a URL do WebSocket (ws ou wss) a partir do endereço da API.
 export function socketUrl(path: string): string {
   if (/^https?:\/\//i.test(apiUrl)) {
     const base = new URL(apiUrl);
@@ -183,6 +204,7 @@ export function socketUrl(path: string): string {
   return `${protocol}//${window.location.host}${apiUrl}${path}`;
 }
 
+// Gera um UUID v4, com alternativa para navegadores sem crypto.randomUUID.
 export function novoUuid(): string {
   if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
 

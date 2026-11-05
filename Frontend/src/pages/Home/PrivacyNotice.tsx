@@ -21,27 +21,31 @@ const privacyItems = [
   },
 ];
 
+// Botão do rodapé que abre o diálogo com o aviso de privacidade.
 function PrivacyNotice() {
   const dialog = useRef<HTMLDialogElement>(null);
   const pressedBackdrop = useRef(false);
 
+  // Abre o diálogo como modal, se ainda não estiver aberto.
   const open = () => {
     if (dialog.current && !dialog.current.open) dialog.current.showModal();
   };
 
+  // Fecha o diálogo.
   const close = () => dialog.current?.close();
 
   return (
     <>
+      {/* Link do rodapé que abre o aviso. */}
       <button className="home-nav-link" type="button" aria-haspopup="dialog" onClick={open}>
         Privacidade
       </button>
 
+      {/* Diálogo de privacidade; só fecha ao clicar no fundo se o clique também começou nele. */}
       <dialog
         className="privacy-dialog"
         ref={dialog}
         aria-labelledby="privacy-title"
-        // O clique só fecha se também começou no fundo: arrastar uma seleção de texto para fora não fecha.
         onPointerDown={(event) => {
           pressedBackdrop.current = event.target === event.currentTarget;
         }}
@@ -49,7 +53,9 @@ function PrivacyNotice() {
           if (pressedBackdrop.current && event.target === event.currentTarget) close();
         }}
       >
+        {/* Conteúdo do diálogo: título com botão de fechar e lista de itens. */}
         <div className="privacy-dialog-body">
+          {/* Cabeçalho com o título e o botão de fechar. */}
           <div className="privacy-dialog-header">
             <h2 id="privacy-title">Privacidade</h2>
             <button
@@ -64,6 +70,7 @@ function PrivacyNotice() {
             </button>
           </div>
 
+          {/* Lista de termos e explicações do aviso. */}
           <dl className="privacy-list">
             {privacyItems.map((item) => (
               <div key={item.term}>

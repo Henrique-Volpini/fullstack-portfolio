@@ -1,3 +1,4 @@
+/* Fundo escurecido atrás do painel aberto. */
 .auth-backdrop {
   position: fixed;
   z-index: 20;
@@ -16,6 +17,7 @@
   transition-delay: 0s;
 }
 
+/* Painel flutuante que, aberto, ocupa o centro da tela. */
 .auth-panel {
   --auth-metal: var(--color-accent);
   --auth-metal-line: var(--color-border-strong);
@@ -60,6 +62,7 @@
   height: min(44rem, calc(100dvh - 2rem));
 }
 
+/* Prévia e diálogo ocupam o painel inteiro e se alternam. */
 .auth-panel-preview,
 .auth-panel-dialog {
   position: absolute;
@@ -81,6 +84,7 @@
   transition-delay: 120ms, 340ms;
 }
 
+/* Rótulo em caixa alta com traço decorativo. */
 .auth-panel-label,
 .auth-panel-topline > span {
   display: inline-flex;
@@ -101,6 +105,7 @@
   content: "";
 }
 
+/* Texto da prévia. */
 .auth-panel-preview-content {
   padding-block: 0.25rem;
 }
@@ -113,6 +118,7 @@
   line-height: 1.2;
 }
 
+/* Botão principal: abrir o painel e enviar o formulário. */
 .auth-panel-open,
 .auth-panel-submit {
   display: flex;
@@ -143,6 +149,7 @@
   transform: translateY(-1px);
 }
 
+/* Diálogo de login e cadastro, rolável em telas baixas. */
 .auth-panel-dialog {
   display: flex;
   flex-direction: column;
@@ -164,6 +171,7 @@
   transition-delay: 280ms, 280ms, 280ms;
 }
 
+/* Barra superior do diálogo. */
 .auth-panel-topline {
   display: flex;
   align-items: center;
@@ -172,6 +180,7 @@
   flex-shrink: 0;
 }
 
+/* Botão de fechar o diálogo. */
 .auth-panel-close {
   display: grid;
   width: 2.2rem;
@@ -203,6 +212,7 @@
   transform: rotate(90deg);
 }
 
+/* Título e descrição da aba atual. */
 .auth-panel-heading {
   flex-shrink: 0;
 }
@@ -224,6 +234,7 @@
   line-height: 1.5;
 }
 
+/* Abas de login e cadastro com indicador deslizante. */
 .auth-panel-tabs {
   position: relative;
   display: grid;
@@ -270,12 +281,13 @@
   color: var(--color-text-primary);
 }
 
+/* Bloco do login com Google. */
 .auth-panel-google {
   flex-shrink: 0;
   margin-top: 1rem;
 }
 
-/* O botão do Google tem altura fixa de 40px, independente do tamanho da fonte. */
+/* Espaço do botão do Google, com altura fixa de 40 px independente do tamanho da fonte. */
 .auth-panel-google-slot {
   display: grid;
   min-height: 40px;
@@ -286,6 +298,7 @@
   grid-area: 1 / 1;
 }
 
+/* Contêiner onde o Google desenha o botão. */
 .auth-panel-google-button {
   display: flex;
   width: 100%;
@@ -299,6 +312,7 @@
   pointer-events: none;
 }
 
+/* Aviso de carregamento ou erro do Google. */
 .auth-panel-google-status {
   margin: 0;
   color: var(--color-text-muted);
@@ -322,6 +336,7 @@
   color: var(--color-accent-strong);
 }
 
+/* Divisor "ou" entre o login com Google e o formulário. */
 .auth-panel-divider {
   display: flex;
   align-items: center;
@@ -340,6 +355,7 @@
   content: "";
 }
 
+/* Formulário de acesso. */
 .auth-panel-form {
   display: flex;
   flex-direction: column;
@@ -348,12 +364,14 @@
   margin-top: 0.9rem;
 }
 
+/* Grupo de campos do formulário. */
 .auth-panel-fields {
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
 }
 
+/* Campo individual com rótulo. */
 .auth-panel-field {
   display: flex;
   flex-direction: column;
@@ -376,6 +394,7 @@
   font-weight: 400;
 }
 
+/* Campos de texto do formulário. */
 .auth-panel-form input {
   color-scheme: var(--color-input-scheme);
   width: 100%;
@@ -416,6 +435,7 @@
   opacity: 0.6;
 }
 
+/* Botão de envio e área de avisos. */
 .auth-panel-actions {
   flex-shrink: 0;
   margin-top: auto;
@@ -439,6 +459,7 @@
   opacity: 0.85;
 }
 
+/* Indicador de carregamento do botão de envio. */
 .auth-panel-spinner {
   display: block;
   width: 1.1rem;
@@ -447,6 +468,7 @@
   animation: auth-spin 850ms linear infinite;
 }
 
+/* Área de avisos de espera e erro. */
 .auth-panel-feedback {
   height: 3rem;
   margin-top: 0.55rem;
@@ -455,6 +477,7 @@
   scrollbar-color: var(--auth-metal-line) transparent;
 }
 
+/* Mensagens de erro e de espera. */
 .auth-panel-notice,
 .auth-panel-wait {
   margin: 0;
@@ -474,25 +497,30 @@
   animation: auth-wait-pulse 1800ms ease-in-out infinite;
 }
 
+/* Entrada do rótulo com leve subida. */
 @keyframes auth-label-in {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* Entrada dos avisos com leve subida. */
 @keyframes auth-notice-in {
   from { opacity: 0; transform: translateY(5px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* Giro contínuo do indicador de carregamento. */
 @keyframes auth-spin {
   to { transform: rotate(360deg); }
 }
 
+/* Pulsação do aviso de espera. */
 @keyframes auth-wait-pulse {
   0%, 100% { opacity: 0.65; }
   50% { opacity: 1; }
 }
 
+/* Compacta espaçamentos em telas com até 800 px de altura. */
 @media (max-height: 800px) {
   .auth-panel-dialog {
     padding: 1rem 1.2rem;
@@ -549,6 +577,7 @@
   }
 }
 
+/* Telas estreitas: o painel fechado vira um botão compacto. */
 @media (max-width: 680px) {
   .auth-panel:not([data-open="true"]) {
     bottom: 0.75rem;
@@ -576,6 +605,7 @@
   }
 }
 
+/* Celulares pequenos: o painel aberto ocupa quase a tela inteira. */
 @media (max-width: 420px) {
   .auth-panel {
     bottom: 0.75rem;
@@ -598,12 +628,14 @@
   }
 }
 
+/* Esconde a descrição em telas muito baixas. */
 @media (max-height: 720px) {
   .auth-panel-description {
     display: none;
   }
 }
 
+/* Chat autenticado e fechado: tamanho do painel em miniatura. */
 .auth-panel[data-auth="true"]:not([data-open="true"]) {
   width: 19rem;
   height: min(32rem, calc(100dvh - 2.5rem));
@@ -614,6 +646,7 @@
   height: 3.25rem;
 }
 
+/* Telas estreitas: tamanhos do chat autenticado e fechado. */
 @media (max-width: 680px) {
   .auth-panel[data-auth="true"]:not([data-open="true"]) {
     width: min(22rem, calc(100vw - 1.5rem));

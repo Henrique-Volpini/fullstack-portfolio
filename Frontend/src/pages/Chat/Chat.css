@@ -1,3 +1,4 @@
+/* Contêiner do chat, nos modos mini (painel pequeno) e tela cheia. */
 .chat {
   --chat-pad: 1.5rem;
   --chat-pad-end: 1.6rem;
@@ -17,6 +18,7 @@
   --chat-pad-end: 0.85rem;
 }
 
+/* Barra superior do chat. */
 .chat-top {
   display: flex;
   flex: none;
@@ -36,6 +38,7 @@
   padding-block: 0;
 }
 
+/* Grupo com indicador de conexão e rótulo. */
 .chat-id {
   display: flex;
   min-width: 0;
@@ -53,6 +56,7 @@
   white-space: nowrap;
 }
 
+/* Nome do destinatário mostrado quando o chat está minimizado. */
 .chat-peek {
   min-width: 0;
   overflow: hidden;
@@ -63,6 +67,7 @@
   white-space: nowrap;
 }
 
+/* Indicador de conexão: verde ao vivo e piscando ao conectar ou consultar. */
 .chat-link {
   display: block;
   width: 0.5rem;
@@ -83,6 +88,7 @@
   animation: chat-blink 1.1s steps(2, jump-none) infinite;
 }
 
+/* Botões da barra superior. */
 .chat-actions {
   display: flex;
   flex: none;
@@ -90,6 +96,7 @@
   gap: 0.2rem;
 }
 
+/* Botões de ícone e de texto da barra superior. */
 .chat-icon,
 .chat-text-button {
   display: grid;
@@ -150,6 +157,7 @@
   opacity: 0.6;
 }
 
+/* Contador de mensagens não lidas. */
 .chat-dot {
   display: inline-grid;
   min-width: 1.15rem;
@@ -165,6 +173,7 @@
   animation: chat-pop 360ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 
+/* Corpo do chat, que recolhe quando minimizado. */
 .chat-body {
   display: flex;
   min-height: 0;
@@ -187,6 +196,7 @@
   padding-top: 0.2rem;
 }
 
+/* Título grande do modo tela cheia. */
 .chat-title {
   flex: none;
   margin: 0.9rem 0 0;
@@ -198,6 +208,7 @@
   animation: chat-rise 460ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* Abas com indicador deslizante. */
 .chat-tabs {
   position: relative;
   display: grid;
@@ -256,6 +267,7 @@
   font-size: 0.78rem;
 }
 
+/* Coluna da conversa aberta. */
 .chat-thread {
   position: relative;
   display: flex;
@@ -266,6 +278,7 @@
   animation: chat-rise 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* Cabeçalho da conversa na visão do operador. */
 .chat-thread-head {
   display: flex;
   flex: none;
@@ -276,6 +289,7 @@
   border-bottom: 1px solid var(--color-border);
 }
 
+/* Botão de voltar à caixa de entrada. */
 .chat-back {
   display: inline-flex;
   height: 2rem;
@@ -322,6 +336,7 @@
   margin-left: auto;
 }
 
+/* Nome do visitante no cabeçalho da conversa. */
 .chat-thread-name {
   min-width: 0;
   overflow: hidden;
@@ -335,12 +350,14 @@
   display: none;
 }
 
+/* Etiqueta do destinatário da conversa. */
 .chat-tag {
   color: var(--color-text-muted);
   font-size: 0.75rem;
   white-space: nowrap;
 }
 
+/* Histórico rolável de mensagens. */
 .chat-log {
   display: flex;
   min-height: 0;
@@ -358,6 +375,7 @@
   margin-top: auto;
 }
 
+/* Mensagem, alinhada e animada conforme o autor. */
 .chat-msg {
   display: flex;
   max-width: 100%;
@@ -380,6 +398,7 @@
   animation-delay: calc(var(--i, 0) * 35ms);
 }
 
+/* Nome e hora acima da mensagem. */
 .chat-meta {
   display: flex;
   align-items: baseline;
@@ -395,6 +414,7 @@
   font-weight: 600;
 }
 
+/* Balão da mensagem. */
 .chat-bubble {
   max-width: min(86%, 26rem);
   padding: 0.55rem 0.8rem;
@@ -427,6 +447,7 @@
   color: var(--color-text-primary);
 }
 
+/* Estado da mensagem: enviando, visto ou falha. */
 .chat-state {
   display: flex;
   flex-wrap: wrap;
@@ -453,6 +474,7 @@
   cursor: pointer;
 }
 
+/* Separador de dia com linhas nas laterais. */
 .chat-day {
   display: flex;
   align-items: center;
@@ -479,6 +501,7 @@
   transform-origin: left;
 }
 
+/* Aviso informativo no topo do histórico. */
 .chat-note {
   margin: 0 0 0.7rem;
   padding-left: 0.65rem;
@@ -488,6 +511,7 @@
   line-height: 1.5;
 }
 
+/* Botão para carregar mais itens. */
 .chat-older {
   align-self: center;
   margin: 0 0 0.6rem;
@@ -513,6 +537,7 @@
   opacity: 0.6;
 }
 
+/* Caixa de erro com botão de tentar de novo. */
 .chat-state-box {
   display: flex;
   flex-direction: column;
@@ -554,6 +579,7 @@
   color: var(--color-accent-strong);
 }
 
+/* Estado vazio da conversa ou da lista. */
 .chat-empty {
   display: flex;
   flex-direction: column;
@@ -574,6 +600,7 @@
   font-size: 0.8rem;
 }
 
+/* Botão flutuante para ir às mensagens mais recentes. */
 .chat-jump {
   position: absolute;
   bottom: 5.2rem;
@@ -598,6 +625,7 @@
   background: var(--color-background-secondary);
 }
 
+/* Dica acima do campo de escrita. */
 .chat-hint {
   flex: none;
   margin: 0.3rem 0 0;
@@ -609,6 +637,7 @@
   display: none;
 }
 
+/* Barra de escrita da mensagem. */
 .chat-composer {
   display: flex;
   flex: none;
@@ -619,12 +648,14 @@
   border-top: 1px solid var(--color-border);
 }
 
+/* Campo de texto com contador de caracteres. */
 .chat-composer-field {
   position: relative;
   min-width: 0;
   flex: 1;
 }
 
+/* Área de texto da mensagem. */
 .chat-composer textarea {
   display: block;
   width: 100%;
@@ -664,6 +695,7 @@
   opacity: 0.6;
 }
 
+/* Contador de caracteres. */
 .chat-count {
   position: absolute;
   right: 0.5rem;
@@ -674,6 +706,7 @@
   pointer-events: none;
 }
 
+/* Botão de enviar. */
 .chat-send {
   display: grid;
   width: 2.65rem;
@@ -730,6 +763,7 @@
   font-size: 0.84rem;
 }
 
+/* Lista de conversas do operador. */
 .chat-list {
   display: block;
   min-height: 0;
@@ -774,6 +808,7 @@
   color: var(--color-accent-strong);
 }
 
+/* Linha com nome do visitante e hora. */
 .chat-list-main {
   display: flex;
   grid-column: 1 / -1;
@@ -808,6 +843,7 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Prévia da última mensagem da conversa. */
 .chat-list-preview {
   grid-column: 1;
   overflow: hidden;
@@ -818,6 +854,7 @@
   white-space: nowrap;
 }
 
+/* Etiqueta e contador de cada conversa. */
 .chat-list-tags {
   display: flex;
   grid-column: 2;
@@ -825,6 +862,7 @@
   gap: 0.5rem;
 }
 
+/* Placeholder de carregamento com brilho animado. */
 .chat-skeleton {
   display: grid;
   gap: 0.75rem;
@@ -853,6 +891,7 @@
   animation-delay: 240ms;
 }
 
+/* Entrada do chat com fade e leve subida. */
 @keyframes chat-enter {
   from {
     opacity: 0;
@@ -865,6 +904,7 @@
   }
 }
 
+/* Entrada de elementos com fade e leve subida. */
 @keyframes chat-rise {
   from {
     opacity: 0;
@@ -877,6 +917,7 @@
   }
 }
 
+/* Entrada de mensagens vindas da esquerda. */
 @keyframes chat-msg-in-left {
   from {
     opacity: 0;
@@ -889,6 +930,7 @@
   }
 }
 
+/* Entrada de mensagens vindas da direita. */
 @keyframes chat-msg-in-right {
   from {
     opacity: 0;
@@ -901,6 +943,7 @@
   }
 }
 
+/* Entrada centralizada do botão de ir às mensagens recentes. */
 @keyframes chat-jump-in {
   from {
     opacity: 0;
@@ -913,6 +956,7 @@
   }
 }
 
+/* Linha que se desenha da esquerda para a direita. */
 @keyframes chat-line {
   from {
     transform: scaleX(0);
@@ -923,6 +967,7 @@
   }
 }
 
+/* Contador que surge crescendo. */
 @keyframes chat-pop {
   from {
     opacity: 0;
@@ -935,6 +980,7 @@
   }
 }
 
+/* Pulso de brilho do indicador ao vivo. */
 @keyframes chat-live {
   0% {
     box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-live) 55%, transparent);
@@ -946,12 +992,14 @@
   }
 }
 
+/* Piscar do indicador enquanto conecta ou consulta. */
 @keyframes chat-blink {
   50% {
     opacity: 0.25;
   }
 }
 
+/* Brilho que corre pelo placeholder de carregamento. */
 @keyframes chat-shimmer {
   from {
     background-position: 200% 0;

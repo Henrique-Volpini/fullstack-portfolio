@@ -32,18 +32,21 @@ from ..serializers import (
 logger = logging.getLogger(__name__)
 
 
+# Representa falhas temporárias do chat.
 class ChatIndisponivel(APIException):
     status_code = 503
     default_detail = "O chat está temporariamente indisponível. Tente novamente."
     default_code = "chat_indisponivel"
 
 
+# Representa conflitos no reenvio de uma mensagem.
 class ConflitoMensagem(APIException):
     status_code = 409
     default_detail = "Este id_cliente já foi utilizado em outra mensagem."
     default_code = "conflito_mensagem"
 
 
+# Verifica se o usuário pode atender as conversas.
 def eh_operador(usuario):
     return bool(
         usuario.is_authenticated
@@ -52,6 +55,7 @@ def eh_operador(usuario):
     )
 
 
+# Obtém os superusuários ativos responsáveis pelo chat.
 def obter_operadores():
     usuarios = tuple(get_user_model().objects.filter(
         is_active=True, is_superuser=True
@@ -61,14 +65,17 @@ def obter_operadores():
     return usuarios
 
 
+# Monta o nome do grupo de eventos do usuário.
 def grupo_usuario(usuario_id):
     return f"chat.usuario.{usuario_id}"
 
 
+# Calcula a assinatura usada para identificar a revogação do token.
 def assinatura_token(token):
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+# Publica um evento nos grupos dos usuários indicados.
 def publicar_evento(usuario_ids, dados, tipo="chat.evento"):
     try:
         camada = get_channel_layer()
@@ -84,6 +91,7 @@ def publicar_evento(usuario_ids, dados, tipo="chat.evento"):
             logger.warning("Não foi possível publicar um evento do chat; consulte o histórico.")
 
 
+# Restringe as conversas às permissões do usuário.
 def conversas_permitidas(usuario):
     if not usuario.is_authenticated or not usuario.is_active:
         raise AuthenticationFailed()
@@ -93,6 +101,7 @@ def conversas_permitidas(usuario):
     return conversas
 
 
+# Consulta conversas com a última mensagem e a contagem de não lidas.
 def consultar_conversas(usuario):
     if eh_operador(usuario):
         recebidas = Q(mensagens__origem=Mensagem.Origem.USUARIO)
@@ -115,10 +124,12 @@ def consultar_conversas(usuario):
     )
 
 
+# Busca uma conversa acessível ao usuário.
 def obter_conversa(usuario, conversa_id):
     return get_object_or_404(conversas_permitidas(usuario).select_related("usuario"), pk=conversa_id)
 
 
+# Cria ou recupera a conversa do usuário com o destinatário.
 def criar_conversa(usuario, dados):
     if eh_operador(usuario):
         raise PermissionDenied("Responda pelas conversas recebidas dos usuários.")
@@ -139,6 +150,7 @@ def criar_conversa(usuario, dados):
     return conversa, criada
 
 
+# Confere se o reenvio corresponde à mensagem já registrada.
 def _verificar_repetida(mensagem, remetente, dados):
     remetente_id = remetente.pk if remetente is not None else None
     if mensagem.conteudo != dados["conteudo"] or mensagem.remetente_id != remetente_id:
@@ -146,12 +158,14 @@ def _verificar_repetida(mensagem, remetente, dados):
     return mensagem, False
 
 
+# Aplica o limite de envio de mensagens do usuário.
 def _limitar_mensagem(remetente):
     limite = UserRateThrottle()
     if not limite.allow_request(SimpleNamespace(user=remetente), None):
         raise Throttled(wait=limite.wait())
 
 
+# Salva a mensagem e publica o evento após a confirmação.
 def _persistir_mensagem(conversa, remetente, origem, dados, *, limitar=True):
     anteriores = Mensagem.objects.select_related("remetente").filter(
         conversa=conversa, origem=origem, id_cliente=dados["id_cliente"]
@@ -184,6 +198,7 @@ def _persistir_mensagem(conversa, remetente, origem, dados, *, limitar=True):
     return mensagem, True
 
 
+# Valida e encaminha a mensagem ao destinatário da conversa.
 def enviar_mensagem(usuario, conversa_id, dados):
     conversa = obter_conversa(usuario, conversa_id)
     validacao = EnviarMensagemSerializer(data=dados)
@@ -198,6 +213,7 @@ def enviar_mensagem(usuario, conversa_id, dados):
     return _persistir_mensagem(conversa, usuario, origem, validacao.validated_data)
 
 
+# Gera e salva a resposta do assistente para a conversa.
 def _enviar_para_assistente(conversa, usuario, dados):
     chave_trava = f"chat.ia.{conversa.pk}"
     if not cache.add(chave_trava, True, timeout=30):
@@ -229,7 +245,6 @@ def _enviar_para_assistente(conversa, usuario, dados):
         ]
         historico.append({"role": "user", "parts": [{"text": dados["conteudo"]}]})
         conteudo_resposta = gerar_resposta(historico)
-        # Rede fora da transação; pergunta, resposta e eventos são confirmados juntos.
         with transaction.atomic():
             mensagem, criada = _persistir_mensagem(
                 conversa, usuario, Mensagem.Origem.USUARIO, dados, limitar=False,
@@ -242,6 +257,7 @@ def _enviar_para_assistente(conversa, usuario, dados):
         cache.delete(chave_trava)
 
 
+# Registra uma resposta com a identidade do assistente.
 def registrar_resposta_assistente(conversa_id, dados):
     conversa = get_object_or_404(Conversa, pk=conversa_id, destinatario=Conversa.Destinatario.ASSISTENTE)
     validacao = EnviarMensagemSerializer(data=dados)
@@ -249,6 +265,7 @@ def registrar_resposta_assistente(conversa_id, dados):
     return _persistir_mensagem(conversa, None, Mensagem.Origem.ASSISTENTE, validacao.validated_data)
 
 
+# Atualiza o marcador de leitura e notifica os participantes.
 def marcar_leitura(usuario, conversa_id, dados):
     conversa = obter_conversa(usuario, conversa_id)
     validacao = MarcarLeituraSerializer(data=dados)
@@ -274,18 +291,21 @@ def marcar_leitura(usuario, conversa_id, dados):
     return evento
 
 
+# Define a paginação da lista de conversas.
 class ConversasPagination(PageNumberPagination):
     page_size = 20
     page_size_query_param = "tamanho"
     max_page_size = 100
 
 
+# Define a paginação do histórico de mensagens por cursor.
 class MensagensPagination(CursorPagination):
     page_size = 50
     page_size_query_param = "tamanho"
     max_page_size = 100
     ordering = "-id"
 
+    # Valida a posição numérica do cursor de mensagens.
     def decode_cursor(self, request):
         cursor = super().decode_cursor(request)
         if cursor is not None and cursor.position is not None:
@@ -297,23 +317,28 @@ class MensagensPagination(CursorPagination):
             cursor = cursor._replace(position=str(posicao))
         return cursor
 
+    # Define a ordem conforme a consulta de mensagens.
     def get_ordering(self, request, queryset, view):
         return ("id",) if "apos_id" in request.query_params else ("-id",)
 
 
+# Compartilha as configurações das rotas HTTP do chat.
 class ChatAPIView(APIView):
     throttle_scope = "chat"
     http_method_names = ("get", "post", "head", "options")
 
+    # Converte falhas do banco em uma resposta de indisponibilidade.
     def handle_exception(self, exc):
         if isinstance(exc, DatabaseError):
             exc = ChatIndisponivel()
         return super().handle_exception(exc)
 
 
+# Disponibiliza o perfil e as configurações iniciais do chat.
 class ChatInicioView(ChatAPIView):
     http_method_names = ("get", "head", "options")
 
+    # Retorna os dados necessários para iniciar o chat.
     def get(self, request):
         return Response({
             "usuario": UsuarioChatSerializer(request.user).data,
@@ -327,10 +352,12 @@ class ChatInicioView(ChatAPIView):
         })
 
 
+# Disponibiliza a listagem e a criação de conversas.
 class ConversasView(ChatAPIView, ListAPIView):
     serializer_class = ConversaSerializer
     pagination_class = ConversasPagination
 
+    # Seleciona as conversas acessíveis e aplica o filtro de destinatário.
     def get_queryset(self):
         conversas = consultar_conversas(self.request.user)
         destinatario = self.request.query_params.get("destinatario")
@@ -339,6 +366,7 @@ class ConversasView(ChatAPIView, ListAPIView):
             conversas = conversas.filter(destinatario=campo.run_validation(destinatario))
         return conversas
 
+    # Cria ou recupera uma conversa e retorna seus dados.
     def post(self, request):
         conversa, criada = criar_conversa(request.user, request.data)
         detalhada = consultar_conversas(request.user).get(pk=conversa.pk)
@@ -348,19 +376,23 @@ class ConversasView(ChatAPIView, ListAPIView):
         )
 
 
+# Disponibiliza os detalhes de uma conversa autorizada.
 class ConversaDetalheView(ChatAPIView, RetrieveAPIView):
     http_method_names = ("get", "head", "options")
     serializer_class = ConversaSerializer
     lookup_url_kwarg = "conversa_id"
 
+    # Seleciona as conversas que o usuário pode consultar.
     def get_queryset(self):
         return consultar_conversas(self.request.user)
 
 
+# Disponibiliza o histórico e o envio de mensagens.
 class MensagensView(ChatAPIView, ListAPIView):
     serializer_class = MensagemSerializer
     pagination_class = MensagensPagination
 
+    # Seleciona as mensagens autorizadas após o identificador informado.
     def get_queryset(self):
         conversa = obter_conversa(self.request.user, self.kwargs["conversa_id"])
         mensagens = conversa.mensagens.select_related("remetente").all()
@@ -369,6 +401,7 @@ class MensagensView(ChatAPIView, ListAPIView):
             mensagens = mensagens.filter(id__gt=campo.run_validation(self.request.query_params["apos_id"]))
         return mensagens
 
+    # Envia a mensagem e retorna a confirmação do registro.
     def post(self, request, conversa_id):
         mensagem, criada = enviar_mensagem(request.user, conversa_id, request.data)
         return Response(
@@ -377,8 +410,10 @@ class MensagensView(ChatAPIView, ListAPIView):
         )
 
 
+# Disponibiliza a atualização de leitura da conversa.
 class LeituraConversaView(ChatAPIView):
     http_method_names = ("post", "options")
 
+    # Marca a mensagem informada como lida na conversa.
     def post(self, request, conversa_id):
         return Response(marcar_leitura(request.user, conversa_id, request.data))

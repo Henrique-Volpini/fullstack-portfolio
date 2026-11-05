@@ -3,15 +3,15 @@ import { defineConfig, type Plugin } from 'vite'
 
 const base = '/'
 
-// Página única: no servidor de desenvolvimento, qualquer endereço que não seja a página volta para ela.
-// Em produção, o public/404.html faz o mesmo no GitHub Pages.
+// Plugin do Vite: no servidor de desenvolvimento, devolve à página inicial os endereços que não são arquivo nem API.
 const redirectToHome: Plugin = {
   name: 'redirect-to-home',
+  // Registra o middleware que redireciona navegações desconhecidas para a base do site.
   configureServer(server) {
     server.middlewares.use((req, res, next) => {
       const { pathname } = new URL(req.url ?? '/', 'http://localhost')
       const isNavigation = req.method === 'GET' && req.headers.accept?.includes('text/html')
-      const isFile = /\.\w+$/.test(pathname) // PDF do currículo, imagens e módulos do Vite
+      const isFile = /\.\w+$/.test(pathname)
       const isApi = pathname === '/api' || pathname.startsWith('/api/')
 
       if (!isNavigation || isFile || isApi || pathname === base) return next()
@@ -21,7 +21,6 @@ const redirectToHome: Plugin = {
   },
 }
 
-// https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), redirectToHome],
   base,

@@ -1,16 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 
+// Propriedades do botão: o texto a copiar e o rótulo de acessibilidade.
 type CopyLinkButtonProps = {
   value: string;
   label: string;
 };
 
+// Botão que copia um link para a área de transferência e confirma por instantes.
 function CopyLinkButton({ value, label }: CopyLinkButtonProps) {
   const [copied, setCopied] = useState(false);
   const resetTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => () => window.clearTimeout(resetTimer.current), []);
 
+  // Copia o valor e mostra o aviso de copiado por 1,8 s; ignora falha de permissão.
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(value);

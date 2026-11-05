@@ -1,9 +1,11 @@
+/* Todos os elementos calculam tamanho incluindo borda e preenchimento. */
 *,
 *::before,
 *::after {
   box-sizing: border-box;
 }
 
+/* Base da página: tamanho de fonte raiz e rolagem suave. */
 html {
   min-width: 320px;
   min-height: 100%;
@@ -11,6 +13,7 @@ html {
   scroll-behavior: smooth;
 }
 
+/* Fundo, cor e fonte padrão do site. */
 body {
   min-width: 320px;
   min-height: 100vh;
@@ -25,6 +28,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Botões e links herdam a fonte do texto ao redor. */
 button,
 a {
   font: inherit;
@@ -39,10 +43,12 @@ button {
   color: inherit;
 }
 
+/* Contêiner do React ocupa ao menos a altura da tela. */
 #root {
   min-height: 100vh;
 }
 
+/* Contorno de foco visível para navegação por teclado. */
 :focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 4px;

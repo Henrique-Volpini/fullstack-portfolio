@@ -1,3 +1,4 @@
+/* Tema padrão Azul-noite: variáveis de cor, grade de planta e amostras do botão de tema. */
 :root {
   --color-background: #07111f;
   --color-background-secondary: #0a1726;
@@ -34,14 +35,13 @@
   --color-shadow: rgba(1, 8, 17, 0.5);
   --color-input-scheme: dark;
 
-  /* Amostras do botão de tema: valem para qualquer tema ativo. */
   --swatch-noite: linear-gradient(135deg, #07111f 50%, #7aafc8 50%);
   --swatch-cianotipo: linear-gradient(135deg, #0a3a8c 50%, #ffd23f 50%);
   --swatch-prancheta: linear-gradient(135deg, #f4f0e6 50%, #c4340b 50%);
   --swatch-anil: linear-gradient(135deg, #110f22 50%, #b3a1f2 50%);
 }
 
-/* Cianótipo: o azul cobalto das plantas copiadas, com linhas brancas e marcação em amarelo. */
+/* Tema Cianótipo: azul cobalto das plantas copiadas, linhas brancas e marcação em amarelo. */
 :root[data-theme="cianotipo"] {
   --color-background: #0a3a8c;
   --color-background-secondary: #082f73;
@@ -78,7 +78,7 @@
   --color-input-scheme: dark;
 }
 
-/* Prancheta: papel de desenho claro, tinta grafite e laranja de marcação de revisão. */
+/* Tema Prancheta: papel de desenho claro, tinta grafite e laranja de marcação de revisão. */
 :root[data-theme="prancheta"] {
   --color-background: #f4f0e6;
   --color-background-secondary: #ebe5d6;
@@ -115,7 +115,7 @@
   --color-input-scheme: light;
 }
 
-/* Anil: o índigo das tintas de tecido, com traços em lavanda sobre fundo quase preto. */
+/* Tema Anil: índigo de tintas de tecido, traços em lavanda sobre fundo quase preto. */
 :root[data-theme="anil"] {
   --color-background: #110f22;
   --color-background-secondary: #0d0b1b;

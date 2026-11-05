@@ -13,6 +13,7 @@ from ..serializers import CadastroUsuarioSerializer, LoginUsuarioSerializer
 from .chat import ChatAPIView, assinatura_token, publicar_evento
 
 
+# Retorna a resposta de bloqueio temporário de login.
 def resposta_bloqueio(request, response=None, credentials=None):
     return JsonResponse(
         {"detail": "Login temporariamente bloqueado. Aguarde o desbloqueio automático."},
@@ -20,6 +21,7 @@ def resposta_bloqueio(request, response=None, credentials=None):
     )
 
 
+# Disponibiliza o cadastro de novas contas.
 class CadastroUsuarioView(CreateAPIView):
 
     serializer_class = CadastroUsuarioSerializer
@@ -29,12 +31,14 @@ class CadastroUsuarioView(CreateAPIView):
     http_method_names = ("post", "options")
 
 
+# Autentica usuários por nome e senha.
 class LoginUsuarioView(APIView):
     permission_classes = (AllowAny,)
     authentication_classes = ()
     throttle_scope = "login"
     http_method_names = ("post", "options")
 
+    # Valida as credenciais e retorna o token de acesso.
     def post(self, request):
         validacao_login = LoginUsuarioSerializer(data=request.data)
         validacao_login.is_valid(raise_exception=True)
@@ -64,10 +68,12 @@ class LoginUsuarioView(APIView):
         )
 
 
+# Encerra a sessão autenticada do usuário.
 class LogoutUsuarioView(ChatAPIView):
     http_method_names = ("post", "options")
     throttle_classes = ()
 
+    # Revoga o token e notifica as conexões do chat.
     def post(self, request):
         assinatura = assinatura_token(request.auth.key)
         Token.objects.filter(key=request.auth.key).delete()

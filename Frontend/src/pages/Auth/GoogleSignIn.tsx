@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+// Parte da API do Google Identity Services usada pelo botão.
 type GoogleIdentity = {
   initialize: (config: {
     client_id: string;
@@ -20,6 +21,7 @@ type GoogleIdentity = {
   ) => void;
 };
 
+// Declara window.google, criado pelo script do Google.
 declare global {
   interface Window {
     google?: { accounts?: { id?: GoogleIdentity } };
@@ -29,7 +31,6 @@ declare global {
 const CLIENT_ID: string = (import.meta.env.VITE_GOOGLE_CLIENT_ID ?? "").trim();
 const SCRIPT_URL = "https://accounts.google.com/gsi/client";
 const SCRIPT_TIMEOUT = 10000;
-// Limites de largura aceitos pelo botão do Google.
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 400;
 
@@ -37,6 +38,7 @@ let loading: Promise<GoogleIdentity> | null = null;
 let initialized = false;
 let credentialHandler: ((credential: string) => void) | null = null;
 
+// Carrega o script do Google uma única vez, com prazo de 10 s, e devolve a API.
 function loadGoogleIdentity(): Promise<GoogleIdentity> {
   loading ??= new Promise<GoogleIdentity>((resolve, reject) => {
     const loaded = window.google?.accounts?.id;
@@ -46,6 +48,7 @@ function loadGoogleIdentity(): Promise<GoogleIdentity> {
     }
 
     const script = document.createElement("script");
+    // Cancela o carregamento: remove o script, libera nova tentativa e rejeita a promessa.
     const fail = () => {
       window.clearTimeout(timer);
       script.remove();
@@ -67,8 +70,7 @@ function loadGoogleIdentity(): Promise<GoogleIdentity> {
   return loading;
 }
 
-// O Google avisa quando initialize() roda mais de uma vez; por isso ele é chamado uma só vez
-// e a resposta segue para quem estiver montado no momento.
+// Inicializa o Google uma só vez (ele avisa se repetir) e entrega a credencial a quem estiver montado.
 function initialize(identity: GoogleIdentity) {
   if (initialized) return;
   identity.initialize({
@@ -80,6 +82,7 @@ function initialize(identity: GoogleIdentity) {
   initialized = true;
 }
 
+// Propriedades: painel ativo, desabilitado, modo (login ou cadastro) e callback da credencial.
 type GoogleSignInProps = {
   active: boolean;
   disabled: boolean;
@@ -87,6 +90,7 @@ type GoogleSignInProps = {
   onCredential: (credential: string) => void;
 };
 
+// Botão de login com Google: carrega o script, desenha o botão na largura do painel e entrega a credencial.
 function GoogleSignIn({ active, disabled, mode, onCredential }: GoogleSignInProps) {
   const [identity, setIdentity] = useState<GoogleIdentity | null>(null);
   const [failed, setFailed] = useState(false);
@@ -125,6 +129,7 @@ function GoogleSignIn({ active, disabled, mode, onCredential }: GoogleSignInProp
 
     let width = 0;
     let timer = 0;
+    // Redesenha o botão do Google na largura do contêiner, entre 200 e 400 px.
     const draw = () => {
       const next = Math.min(MAX_WIDTH, Math.floor(container.clientWidth));
       if (next < MIN_WIDTH || next === width) return;
@@ -141,7 +146,7 @@ function GoogleSignIn({ active, disabled, mode, onCredential }: GoogleSignInProp
         locale: "pt-BR",
       });
     };
-    // O painel muda de tamanho ao abrir; só desenha o botão quando a largura estabiliza.
+    // Adia o desenho até a largura estabilizar, pois o painel muda de tamanho ao abrir.
     const schedule = () => {
       window.clearTimeout(timer);
       timer = window.setTimeout(draw, 200);
@@ -158,6 +163,7 @@ function GoogleSignIn({ active, disabled, mode, onCredential }: GoogleSignInProp
     };
   }, [active, identity, mode]);
 
+  // Tenta carregar o script do Google de novo depois de uma falha.
   const retry = () => {
     setFailed(false);
     setAttempt((value) => value + 1);
@@ -166,9 +172,13 @@ function GoogleSignIn({ active, disabled, mode, onCredential }: GoogleSignInProp
   if (!CLIENT_ID) return null;
 
   return (
+    // Bloco do login com Google: botão (ou aviso de status) e divisor.
     <div className="auth-panel-google" data-disabled={disabled}>
+      {/* Espaço do botão do Google e das mensagens de carregamento ou erro. */}
       <div className="auth-panel-google-slot">
+        {/* Contêiner onde o Google desenha o botão. */}
         <div className="auth-panel-google-button" ref={button} />
+        {/* Status enquanto o Google não carregou: erro com nova tentativa ou aviso de carregamento. */}
         {!identity && (failed ? (
           <p className="auth-panel-google-status" role="alert">
             Não foi possível carregar o login do Google.{" "}

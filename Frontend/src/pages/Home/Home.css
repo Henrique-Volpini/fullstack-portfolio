@@ -1,13 +1,16 @@
+/* Altura do cabeçalho fixo, compartilhada com a área principal. */
 .home-header,
 .home {
   --home-header-height: 4.5rem;
 }
 
+/* Largura máxima e centralização do conteúdo. */
 .home-container {
   width: min(calc(100% - 2.5rem), 75rem);
   margin-inline: auto;
 }
 
+/* Cabeçalho fixo; ganha fundo desfocado ao rolar a página. */
 .home-header {
   position: fixed;
   z-index: 10;
@@ -27,6 +30,7 @@
   border-bottom-color: var(--color-blueprint-line-muted);
 }
 
+/* Barra de navegação dentro do cabeçalho. */
 .home-nav {
   display: flex;
   height: calc(var(--home-header-height) - 1px);
@@ -35,6 +39,7 @@
   gap: 2rem;
 }
 
+/* Logo em texto, no estilo de código. */
 .home-logo {
   display: inline-flex;
   min-height: 2.75rem;
@@ -55,12 +60,14 @@
   color: var(--color-accent);
 }
 
+/* Grupo de links de navegação. */
 .home-nav-links {
   display: flex;
   align-items: center;
   gap: clamp(1rem, 3vw, 2rem);
 }
 
+/* Link de navegação com sublinhado animado. */
 .home-nav-link {
   position: relative;
   padding-block: 0.5rem;
@@ -99,6 +106,7 @@
   transform-origin: left;
 }
 
+/* Botão de troca de tema. */
 .theme-toggle {
   display: inline-flex;
   flex: 0 0 auto;
@@ -122,6 +130,7 @@
   left: 1.1rem;
 }
 
+/* Amostra de cor do tema atual. */
 .theme-toggle-dot {
   display: block;
   width: 0.85rem;
@@ -140,6 +149,7 @@
   transform: rotate(180deg);
 }
 
+/* Rótulos de tema sobrepostos, para o botão manter largura fixa. */
 .theme-toggle-label {
   display: inline-grid;
   justify-items: start;
@@ -154,6 +164,7 @@
   visibility: visible;
 }
 
+/* Área principal, com grade de planta ao fundo. */
 .home {
   --home-stack-height: clamp(19rem, 34svh, 22rem);
   --home-contact-height: clamp(33rem, 65svh, 38rem);
@@ -163,10 +174,12 @@
   padding-top: var(--home-header-height);
 }
 
+/* Reserva o espaço do cabeçalho fixo ao rolar até uma seção. */
 .home section[id] {
   scroll-margin-top: calc(var(--home-header-height) + 2rem);
 }
 
+/* Sombra de texto que mantém a leitura sobre a grade de fundo. */
 .hero-content,
 .about-heading,
 .about-text,
@@ -181,6 +194,7 @@
     0 0 8px var(--color-background);
 }
 
+/* Grade de planta fixa ao fundo da página. */
 .home::before {
   position: fixed;
   z-index: -2;
@@ -200,6 +214,7 @@
   pointer-events: none;
 }
 
+/* Escurece as laterais da grade. */
 .home::after {
   position: fixed;
   z-index: -1;
@@ -215,6 +230,7 @@
   pointer-events: none;
 }
 
+/* Seção de apresentação em duas colunas. */
 .home-hero {
   position: relative;
   display: grid;
@@ -226,6 +242,7 @@
   padding-block: clamp(4rem, 8vw, 7rem);
 }
 
+/* Bloco de texto da apresentação. */
 .hero-content {
   position: relative;
   z-index: 1;
@@ -233,6 +250,7 @@
   animation: home-enter 500ms ease-out both;
 }
 
+/* Rótulo acima do nome. */
 .hero-eyebrow {
   display: inline-flex;
   align-items: center;
@@ -255,6 +273,7 @@
   animation: hero-eyebrow-line-in 600ms 300ms ease-out forwards;
 }
 
+/* Nome em destaque. */
 .hero-title {
   display: flex;
   flex-direction: column;
@@ -276,6 +295,7 @@
   color: var(--color-accent);
 }
 
+/* Descrição curta da apresentação. */
 .hero-description {
   max-width: 36.875rem;
   margin: 0;
@@ -284,6 +304,7 @@
   line-height: 1.65;
 }
 
+/* Linha com as tecnologias principais. */
 .hero-technologies {
   margin: 1.5rem 0 0;
   color: var(--color-text-muted);
@@ -299,6 +320,7 @@
   color: var(--color-accent);
 }
 
+/* Posição e animação da foto de perfil. */
 .hero-photo-wrapper {
   position: relative;
   z-index: 1;
@@ -307,6 +329,7 @@
   animation: home-enter 500ms 120ms ease-out both;
 }
 
+/* Moldura da foto de perfil. */
 .hero-photo-frame {
   position: relative;
   isolation: isolate;
@@ -339,6 +362,7 @@
   pointer-events: none;
 }
 
+/* Foto de perfil cobrindo a moldura. */
 .hero-photo-image {
   position: relative;
   z-index: 1;
@@ -350,6 +374,7 @@
   filter: saturate(0.82) contrast(1.03) brightness(0.94);
 }
 
+/* Seção Sobre mim em duas colunas: título com abas e conteúdo. */
 .home-about {
   position: relative;
   display: grid;
@@ -361,6 +386,7 @@
   margin-top: -4rem;
 }
 
+/* Coluna com título e abas. */
 .about-heading {
   position: relative;
   align-self: start;
@@ -377,6 +403,7 @@
   content: "";
 }
 
+/* Numeração e rótulo acima do título. */
 .about-index,
 .about-label {
   display: block;
@@ -406,12 +433,14 @@
   line-height: 1;
 }
 
+/* Lista de abas dos tópicos. */
 .about-tabs {
   display: grid;
   margin-top: 2rem;
   border-top: 1px solid var(--color-border);
 }
 
+/* Aba de tópico, com marcador lateral. */
 .about-tab {
   position: relative;
   display: flex;
@@ -462,12 +491,14 @@
   opacity: 1;
 }
 
+/* Coluna do conteúdo do tópico. */
 .about-content {
   min-width: 0;
   padding-right: 0.5rem;
   animation: about-panel-enter 240ms ease-out both;
 }
 
+/* Logo e legenda da empresa atual. */
 .about-company {
   display: flex;
   align-items: center;
@@ -495,6 +526,7 @@
   text-transform: uppercase;
 }
 
+/* Parágrafos do tópico. */
 .about-text {
   display: grid;
   max-width: 70ch;
@@ -509,12 +541,14 @@
   line-height: 1.75;
 }
 
+/* Troca animada de tópico: o conteúdo recolhe com clip-path e reabre com o novo. */
 .about-reveal {
   position: relative;
   display: grid;
   border-bottom: 1px solid var(--color-transparent);
 }
 
+/* Conteúdo visível e cópias invisíveis ocupam a mesma célula da grade. */
 .about-reveal-content,
 .about-sizer {
   display: flex;
@@ -553,11 +587,13 @@
   clip-path: inset(0 0 100% 0);
 }
 
+/* Moldura do quadro de detalhes. */
 .about-details-frame {
   margin: auto 0 0;
   border-top: 1px solid var(--color-border);
 }
 
+/* Lista de termos e valores do tópico. */
 .about-details {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -592,6 +628,7 @@
   line-height: 1.45;
 }
 
+/* Seção Stack. */
 .home-stack {
   position: relative;
   z-index: 1;
@@ -602,6 +639,7 @@
   border-top: 1px solid var(--color-blueprint-line-muted);
 }
 
+/* Título numerado das seções, com linha que se desenha ao aparecer. */
 .section-heading {
   display: flex;
   align-items: center;
@@ -638,6 +676,7 @@
   text-transform: uppercase;
 }
 
+/* Grade de tecnologias. */
 .stack-list {
   display: grid;
   min-height: 0;
@@ -649,6 +688,7 @@
   list-style: none;
 }
 
+/* Item de tecnologia, com marcador lateral. */
 .stack-item {
   position: relative;
   display: grid;
@@ -695,10 +735,12 @@
   outline-offset: -2px;
 }
 
+/* Nome da tecnologia. */
 .stack-name {
   min-width: 0;
 }
 
+/* Descrição que se abre sob o item ao passar o mouse ou focar. */
 .stack-description {
   position: absolute;
   z-index: 2;
@@ -750,6 +792,7 @@
   transition: none;
 }
 
+/* Seção Contato. */
 .home-contact {
   display: grid;
   height: var(--home-contact-height);
@@ -758,6 +801,7 @@
   border-top: 1px solid var(--color-blueprint-line-muted);
 }
 
+/* Duas colunas: introdução e links. */
 .contact-layout {
   display: grid;
   min-height: 0;
@@ -769,6 +813,7 @@
   scrollbar-color: var(--color-blueprint-line) var(--color-transparent);
 }
 
+/* Textos de introdução do contato. */
 .contact-eyebrow {
   margin: 0;
   color: var(--color-accent);
@@ -796,6 +841,7 @@
   line-height: 1.7;
 }
 
+/* Lista de links de contato. */
 .contact-links {
   margin: 0;
   padding: 0;
@@ -807,6 +853,7 @@
   position: relative;
 }
 
+/* Link de contato com seta indicando a ação. */
 .contact-links a {
   display: grid;
   min-height: 4.5rem;
@@ -830,6 +877,7 @@
   color: var(--color-accent-strong);
 }
 
+/* Botão de copiar link, sobre o início de cada item. */
 .copy-link {
   position: absolute;
   z-index: 1;
@@ -861,6 +909,7 @@
   outline-offset: -2px;
 }
 
+/* Ícones de copiar e de confirmação, que se alternam. */
 .copy-link-icon,
 .copy-link-check {
   grid-area: 1 / 1;
@@ -890,6 +939,7 @@
   transform: scale(1);
 }
 
+/* Texto de status visível apenas para leitores de tela. */
 .copy-link-status {
   position: absolute;
   width: 1px;
@@ -924,6 +974,7 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
+/* Rodapé da página. */
 .home-footer {
   display: flex;
   flex-wrap: wrap;
@@ -933,12 +984,14 @@
   border-top: 1px solid var(--color-blueprint-line-muted);
 }
 
+/* Texto de direitos autorais. */
 .home-footer-note {
   margin: 0;
   color: var(--color-text-muted);
   font-size: 0.9rem;
 }
 
+/* Diálogo de privacidade, com entrada e saída animadas. */
 .privacy-dialog {
   width: min(50rem, calc(100vw - 2rem));
   max-height: min(44rem, calc(100dvh - 2rem));
@@ -978,6 +1031,7 @@
   opacity: 1;
 }
 
+/* Estado inicial da animação de abertura do diálogo. */
 @starting-style {
   .privacy-dialog[open] {
     opacity: 0;
@@ -989,16 +1043,18 @@
   }
 }
 
-/* Mantém a página parada atrás do aviso sem deslocar o layout quando a barra de rolagem some. */
+/* Mantém a página parada atrás do aviso, sem deslocar o layout quando a barra de rolagem some. */
 html:has(.privacy-dialog[open]) {
   overflow: hidden;
   scrollbar-gutter: stable;
 }
 
+/* Conteúdo do diálogo de privacidade. */
 .privacy-dialog-body {
   padding: clamp(1.25rem, 4vw, 2rem);
 }
 
+/* Cabeçalho com título e botão de fechar. */
 .privacy-dialog-header {
   display: flex;
   align-items: flex-start;
@@ -1014,6 +1070,7 @@ html:has(.privacy-dialog[open]) {
   line-height: 1.1;
 }
 
+/* Botão de fechar o diálogo. */
 .privacy-dialog-close {
   display: grid;
   width: 2.2rem;
@@ -1052,6 +1109,7 @@ html:has(.privacy-dialog[open]) {
   outline-offset: 2px;
 }
 
+/* Lista de termos e explicações do aviso. */
 .privacy-list {
   margin: 1.5rem 0 0;
   padding: 0;
@@ -1091,6 +1149,7 @@ html:has(.privacy-dialog[open]) {
   color: var(--color-accent-strong);
 }
 
+/* Entrada com fade e leve subida. */
 @keyframes home-enter {
   from {
     opacity: 0;
@@ -1103,6 +1162,7 @@ html:has(.privacy-dialog[open]) {
   }
 }
 
+/* Entrada do painel de tópico com fade e leve subida. */
 @keyframes about-panel-enter {
   from {
     opacity: 0;
@@ -1115,10 +1175,12 @@ html:has(.privacy-dialog[open]) {
   }
 }
 
+/* Traço do rótulo que se desenha da esquerda para a direita. */
 @keyframes hero-eyebrow-line-in {
   to { transform: scaleX(1); }
 }
 
+/* Seções que surgem com fade e subida ao entrar na tela. */
 [data-reveal] {
   opacity: 0;
   transform: translateY(22px);
@@ -1132,12 +1194,14 @@ html:has(.privacy-dialog[open]) {
   transform: translateY(0);
 }
 
+/* Telas de até 1200 px. */
 @media (max-width: 1200px) {
   .home {
     --home-stack-height: 23rem;
   }
 }
 
+/* Telas de até 920 px: colunas viram uma só. */
 @media (max-width: 920px) {
   .home {
     --home-stack-height: 24rem;
@@ -1180,6 +1244,7 @@ html:has(.privacy-dialog[open]) {
   }
 }
 
+/* Telas de até 680 px: layout de celular. */
 @media (max-width: 680px) {
   .home-header,
   .home {
@@ -1291,6 +1356,7 @@ html:has(.privacy-dialog[open]) {
   }
 }
 
+/* Telas de até 420 px. */
 @media (max-width: 420px) {
   .home-nav-links {
     flex-wrap: wrap;
@@ -1318,6 +1384,7 @@ html:has(.privacy-dialog[open]) {
   }
 }
 
+/* Telas de até 359 px. */
 @media (max-width: 359px) {
   .theme-toggle {
     right: -0.5rem;

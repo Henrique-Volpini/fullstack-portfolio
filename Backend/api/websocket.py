@@ -27,11 +27,13 @@ from .views.chat import (
 from .serializers import MensagemSerializer, UsuarioChatSerializer
 
 
+# Valida o token sem bloquear o processamento assíncrono.
 @database_sync_to_async
 def autenticar_token(token):
     return validar_token(token)
 
 
+# Aplica o limite de abertura de conexões por IP.
 @database_sync_to_async
 def limitar_conexao(ip):
     limite = AnonRateThrottle()
@@ -40,7 +42,9 @@ def limitar_conexao(ip):
         raise Throttled(wait=limite.wait())
 
 
+# Gerencia a conexão WebSocket autenticada do chat.
 class ChatConsumer(AsyncJsonWebsocketConsumer):
+    # Inicializa a conexão e solicita a autenticação.
     async def connect(self):
         self.usuario = None
         self.token = None
@@ -69,12 +73,14 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         })
         self.prazo_autenticacao = asyncio.create_task(self._aguardar_autenticacao())
 
+    # Encerra a conexão se a autenticação não ocorrer no prazo.
     async def _aguardar_autenticacao(self):
         await asyncio.sleep(settings.CHAT_WEBSOCKET_AUTH_TIMEOUT)
         if self.usuario is None:
             self.fechando = True
             await self.close(code=4401)
 
+    # Cancela os prazos e remove a conexão do grupo do usuário.
     async def disconnect(self, close_code):
         self.fechando = True
         await self._cancelar_prazo()
@@ -85,6 +91,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             except Exception:
                 pass
 
+    # Valida os dados recebidos e encaminha o comando do chat.
     async def receive(self, text_data=None, bytes_data=None, **kwargs):
         if self.fechando:
             return
@@ -161,6 +168,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             await self._erro(ChatIndisponivel(), dados)
             await self._fechar(1013)
 
+    # Autentica o token e vincula a conexão ao usuário.
     async def _autenticar(self, dados):
         if dados["type"] != "autenticar" or set(dados) != {"type", "token"}:
             raise AuthenticationFailed("Autentique a conexão antes de usar o chat.")
@@ -190,6 +198,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         })
         self.prazo_expiracao = asyncio.create_task(self._aguardar_expiracao(vencimento))
 
+    # Encerra a conexão quando o token expira.
     async def _aguardar_expiracao(self, vencimento):
         while not self.fechando:
             restante = (vencimento - timezone.now()).total_seconds()
@@ -198,6 +207,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                 return
             await asyncio.sleep(restante)
 
+    # Revalida o token e as permissões da conexão.
     async def _validar_acesso(self):
         acesso = await autenticar_token(self.token)
         if self.fechando:
@@ -209,6 +219,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         self.usuario = usuario
         return True
 
+    # Verifica se a conversa usa o assistente de IA.
     @database_sync_to_async
     def _usa_ia(self, conversa_id):
         return (
@@ -218,12 +229,14 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             ).exists()
         )
 
+    # Encaminha o envio ao processamento síncrono apropriado.
     async def _enviar(self, conversa_id, dados):
         usa_ia = await self._usa_ia(conversa_id)
         return await database_sync_to_async(
             self._enviar_sincrono, thread_sensitive=not usa_ia,
         )(conversa_id, dados)
 
+    # Salva a mensagem e prepara a confirmação de envio.
     def _enviar_sincrono(self, conversa_id, dados):
         mensagem, criada = enviar_mensagem(self.usuario, conversa_id, dados)
         return {
@@ -231,6 +244,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             "repetida": not criada,
         }
 
+    # Envia um erro estruturado relacionado ao comando recebido.
     async def _erro(self, erro, comando=None):
         if self.fechando:
             return
@@ -249,6 +263,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                     pass
         await self.send_json(dados)
 
+    # Cancela os prazos e encerra a conexão com o código informado.
     async def _fechar(self, codigo):
         if self.fechando:
             return
@@ -257,6 +272,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         await self._cancelar_expiracao()
         await self.close(code=codigo)
 
+    # Cancela o prazo para autenticar a conexão.
     async def _cancelar_prazo(self):
         if self.prazo_autenticacao is not None:
             self.prazo_autenticacao.cancel()
@@ -264,6 +280,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                 await self.prazo_autenticacao
             self.prazo_autenticacao = None
 
+    # Cancela o encerramento agendado para a expiração do token.
     async def _cancelar_expiracao(self):
         tarefa = self.prazo_expiracao
         self.prazo_expiracao = None
@@ -272,6 +289,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             with suppress(asyncio.CancelledError):
                 await tarefa
 
+    # Entrega eventos somente após validar o acesso à conversa.
     async def chat_evento(self, evento):
         if self.fechando or self.usuario is None:
             return
@@ -286,6 +304,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         except (DatabaseError, SessaoIndisponivel):
             await self._fechar(1013)
 
+    # Confere se o usuário pode receber o evento da conversa.
     @database_sync_to_async
     def _pode_receber(self, dados):
         conversa_id = dados.get("conversa_id") or dados.get("mensagem", {}).get("conversa_id")
@@ -293,6 +312,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             return False
         return conversas_permitidas(self.usuario).filter(pk=conversa_id).exists()
 
+    # Encerra a conexão quando seu token é revogado.
     async def chat_revogar(self, evento):
         if self.token and assinatura_token(self.token) == evento["dados"]["assinatura"]:
             await self._fechar(4401)

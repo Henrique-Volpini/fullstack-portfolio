@@ -4,15 +4,18 @@ import { apiUrl } from "../Chat/chatApi";
 import GoogleSignIn from "./GoogleSignIn";
 import "./AuthPanel.css";
 
+// Aba exibida no painel de acesso.
 type AuthView = "login" | "cadastro";
+// Qual envio está em andamento, ou idle quando não há nenhum.
 type SubmitState = "idle" | AuthView | "google";
+// Aviso exibido abaixo do formulário.
 type AuthNotice = { type: "error"; message: string };
 
 const SESSION_EXPIRED_MESSAGE = "Sua sessão expirou. Entre novamente para continuar.";
 const TOKEN_STORAGE_KEY = "portfolio.chat.token";
-// O backend rejeita credenciais maiores que isso; falhar aqui evita uma requisição inútil.
 const MAX_GOOGLE_CREDENTIAL_LENGTH = 8192;
 
+// Lê o token de acesso salvo na sessionStorage, ou null se indisponível.
 function readStoredToken(): string | null {
   try {
     return window.sessionStorage.getItem(TOKEN_STORAGE_KEY);
@@ -21,15 +24,16 @@ function readStoredToken(): string | null {
   }
 }
 
+// Salva ou remove o token na sessionStorage; sem armazenamento, a sessão vale só até recarregar.
 function storeToken(token: string | null) {
   try {
     if (token) window.sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
     else window.sessionStorage.removeItem(TOKEN_STORAGE_KEY);
   } catch {
-    // Sem armazenamento disponível, a sessão vale apenas até recarregar a página.
   }
 }
 
+// Converte a falha do login com Google em mensagem amigável.
 function describeGoogleStatus(status: number, data: unknown, retryAfter: string | null): string {
   if (status === 401) {
     const detail = data && typeof data === "object" && "detail" in data ? data.detail : null;
@@ -50,6 +54,7 @@ function describeGoogleStatus(status: number, data: unknown, retryAfter: string 
   return "Não foi possível entrar com o Google. Tente novamente.";
 }
 
+// Envia login, cadastro ou login Google à API e devolve o JSON, traduzindo erros em mensagens.
 async function sendAuthRequest(
   endpoint: "login" | "usuarios" | "login/google",
   data: { username: string; password: string; email?: string } | { credential: string },
@@ -102,6 +107,7 @@ async function sendAuthRequest(
   return result as Record<string, unknown>;
 }
 
+// Escolhe o elemento do chat que recebe o foco: o campo de mensagem (com mouse) ou o botão fechar.
 function chatFocusTarget(root: HTMLElement | null): HTMLElement | null {
   if (!root) return null;
   const composer = window.matchMedia("(pointer: fine)").matches
@@ -110,6 +116,7 @@ function chatFocusTarget(root: HTMLElement | null): HTMLElement | null {
   return composer ?? root.querySelector<HTMLElement>(".chat-close");
 }
 
+// Painel flutuante de acesso: prévia, diálogo de login e cadastro e, autenticado, o chat.
 function AuthPanel() {
   const [isOpen, setIsOpen] = useState(false);
   const [view, setView] = useState<AuthView>("login");
@@ -136,7 +143,6 @@ function AuthPanel() {
   }, []);
 
   useEffect(() => {
-    // Em telas baixas o diálogo rola; o botão do Google fica no topo e o aviso no fim.
     if (notice) feedback.current?.scrollIntoView({ block: "nearest" });
   }, [notice]);
 
@@ -208,6 +214,7 @@ function AuthPanel() {
     };
   }, [isOpen]);
 
+  // Abre o painel em tela cheia e reinicia formulário e avisos.
   const openPanel = () => {
     flipDuration.current = 700;
     previousPosition.current = panel.current?.getBoundingClientRect() ?? null;
@@ -220,6 +227,7 @@ function AuthPanel() {
     setIsOpen(true);
   };
 
+  // Fecha o painel e cancela qualquer requisição em andamento.
   const closePanel = () => {
     request.current?.abort();
     request.current = null;
@@ -231,12 +239,14 @@ function AuthPanel() {
     setIsOpen(false);
   };
 
+  // Alterna o chat entre minimizado e restaurado.
   const toggleMinimized = () => {
     flipDuration.current = 380;
     previousPosition.current = panel.current?.getBoundingClientRect() ?? null;
     setMinimized((value) => !value);
   };
 
+  // Encerra a sessão local depois do logout.
   const handleLoggedOut = () => {
     closePanel();
     storeToken(null);
@@ -244,6 +254,7 @@ function AuthPanel() {
     setMinimized(false);
   };
 
+  // Limpa a sessão expirada e pede para entrar de novo.
   const handleSessionExpired = () => {
     storeToken(null);
     setAccessToken(null);
@@ -257,6 +268,7 @@ function AuthPanel() {
     }
   };
 
+  // Troca entre as abas de login e cadastro.
   const changeView = (nextView: AuthView) => {
     if (isAuthenticated || isSubmitting || nextView === view) return;
     setView(nextView);
@@ -265,6 +277,7 @@ function AuthPanel() {
     setPrefilledUsername("");
   };
 
+  // Fecha com Esc e mantém o foco do Tab dentro do painel aberto.
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (!isOpen) return;
 
@@ -294,6 +307,7 @@ function AuthPanel() {
     }
   };
 
+  // Guarda o token recebido e abre o chat.
   const acceptLogin = (login: Record<string, unknown>) => {
     if (typeof login.token !== "string" || !login.token.trim()) {
       throw new Error("O servidor não confirmou o login. Tente novamente.");
@@ -308,6 +322,7 @@ function AuthPanel() {
     window.setTimeout(() => chatFocusTarget(panel.current)?.focus(), 1100);
   };
 
+  // Envia a credencial do Google à API e conclui o login, com prazo de 15 s.
   const handleGoogleCredential = async (credential: string) => {
     if (request.current || isAuthenticated || !isOpen) return;
 
@@ -347,6 +362,7 @@ function AuthPanel() {
     }
   };
 
+  // Valida e envia o formulário: cria a conta (no cadastro) e faz o login, tratando falhas.
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (request.current || isAuthenticated) return;
@@ -418,6 +434,7 @@ function AuthPanel() {
 
   return (
     <>
+      {/* Fundo escurecido que fecha o painel ao ser clicado. */}
       <div
         className="auth-backdrop"
         data-open={isOpen}
@@ -425,6 +442,7 @@ function AuthPanel() {
         onClick={closePanel}
       />
 
+      {/* Painel de acesso: vira diálogo ao abrir e, autenticado, hospeda o chat. */}
       <section
         className="auth-panel"
         data-open={isOpen}
@@ -439,6 +457,7 @@ function AuthPanel() {
         ref={panel}
         onKeyDown={handleKeyDown}
       >
+        {/* Autenticado mostra o chat; caso contrário, a prévia e o diálogo de acesso. */}
         {accessToken !== null ? (
           <Chat
             token={accessToken}
@@ -452,6 +471,7 @@ function AuthPanel() {
           />
         ) : (
           <>
+            {/* Prévia do painel fechado, convidando a fazer login. */}
             <div className="auth-panel-preview" aria-hidden={isOpen} inert={isOpen}>
               <span className="auth-panel-label">CONVERSA</span>
               <div className="auth-panel-preview-content">
@@ -471,7 +491,9 @@ function AuthPanel() {
               </button>
             </div>
 
+            {/* Diálogo de login e cadastro. */}
             <div className="auth-panel-dialog" aria-hidden={!isOpen} inert={!isOpen}>
+              {/* Barra superior com o rótulo e o botão de fechar. */}
               <div className="auth-panel-topline">
                 <span>ACESSO</span>
                 <button
@@ -487,6 +509,7 @@ function AuthPanel() {
                 </button>
               </div>
 
+              {/* Título e descrição da aba atual. */}
               <div className="auth-panel-heading" key={view}>
                 <h2 id="auth-title">{view === "login" ? "Entre para conversar." : "Crie sua conta."}</h2>
                 <p className="auth-panel-description">
@@ -496,6 +519,7 @@ function AuthPanel() {
                 </p>
               </div>
 
+              {/* Abas para alternar entre login e cadastro. */}
               <div className="auth-panel-tabs" aria-label="Escolha entre login e cadastro">
                 <button
                   type="button"
@@ -522,8 +546,11 @@ function AuthPanel() {
                 onCredential={handleGoogleCredential}
               />
 
+              {/* Formulário com usuário, senha e e-mail (este só no cadastro). */}
               <form className="auth-panel-form" onSubmit={handleSubmit} aria-busy={isSubmitting}>
+                {/* Campos do formulário. */}
                 <div className="auth-panel-fields" key={view}>
+                  {/* Campo do nome de usuário. */}
                   <div className="auth-panel-field">
                     <label htmlFor="auth-username">Nome de usuário</label>
                     <input
@@ -539,6 +566,7 @@ function AuthPanel() {
                     />
                   </div>
 
+                  {/* Campo da senha. */}
                   <div className="auth-panel-field">
                     <label htmlFor="auth-password">Senha</label>
                     <input
@@ -553,6 +581,7 @@ function AuthPanel() {
                     />
                   </div>
 
+                  {/* Campo de e-mail opcional, ativo apenas no cadastro. */}
                   <div className="auth-panel-field auth-panel-email" aria-hidden={view !== "cadastro"} inert={view !== "cadastro"}>
                     <label htmlFor="auth-email">E-mail <span>(opcional)</span></label>
                     <input
@@ -567,6 +596,7 @@ function AuthPanel() {
                   </div>
                 </div>
 
+                {/* Botão de envio e mensagens de espera e erro. */}
                 <div className="auth-panel-actions">
                   <button className="auth-panel-submit" type="submit" disabled={isSubmitting}>
                     <span className="auth-panel-submit-label" key={`${view}-${submitState}`}>
@@ -580,6 +610,7 @@ function AuthPanel() {
                       </svg>
                     )}
                   </button>
+                  {/* Área de avisos: espera em andamento e erros. */}
                   <div className="auth-panel-feedback" ref={feedback}>
                     {isSubmitting && (
                       <p className="auth-panel-wait" role="status">

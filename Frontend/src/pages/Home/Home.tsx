@@ -9,8 +9,10 @@ import "../../styles/theme.css";
 import "../../styles/global.css";
 import "./Home.css";
 
+// Identificadores das seções do Sobre mim.
 type AboutSectionId = "profile" | "education" | "work" | "focus";
 
+// Conteúdo de uma seção do Sobre mim: textos, detalhes e, se houver, o logo da empresa.
 type AboutSection = {
   id: AboutSectionId;
   label: string;
@@ -124,9 +126,11 @@ const technologies = [
   },
 ];
 
+// Corpo de uma seção do Sobre mim: logo opcional, parágrafos e quadro de detalhes.
 function AboutBody({ section }: { section: AboutSection }) {
   return (
     <>
+      {/* Logo da empresa atual, só na seção de trabalho. */}
       {section.showBanestesLogo && (
         <div className="about-company">
           <img
@@ -140,12 +144,14 @@ function AboutBody({ section }: { section: AboutSection }) {
         </div>
       )}
 
+      {/* Parágrafos da seção. */}
       <div className="about-text">
         {section.paragraphs.map((paragraph) => (
           <p key={paragraph}>{paragraph}</p>
         ))}
       </div>
 
+      {/* Quadro com os detalhes em formato de lista. */}
       <div className="about-details-frame">
         <dl className="about-details">
           {section.details.map((detail) => (
@@ -162,6 +168,7 @@ function AboutBody({ section }: { section: AboutSection }) {
 
 let scrollFrame = 0;
 
+// Rola a página até a posição com animação própria, interrompida se o usuário rolar ou digitar.
 function scrollToY(targetY: number) {
   cancelAnimationFrame(scrollFrame);
 
@@ -177,12 +184,14 @@ function scrollToY(targetY: number) {
   const startTime = performance.now();
   const interruptions = ["wheel", "touchstart", "keydown"] as const;
 
+  // Cancela a animação e remove os ouvintes de interrupção.
   const stop = () => {
     cancelAnimationFrame(scrollFrame);
     interruptions.forEach((type) => window.removeEventListener(type, stop));
   };
   interruptions.forEach((type) => window.addEventListener(type, stop, { passive: true }));
 
+  // Avança um quadro da rolagem com aceleração e desaceleração suaves.
   const step = (now: number) => {
     const progress = Math.min(1, (now - startTime) / duration);
     const eased =
@@ -195,6 +204,7 @@ function scrollToY(targetY: number) {
   scrollFrame = requestAnimationFrame(step);
 }
 
+// Página inicial: cabeçalho, apresentação, sobre mim, stack, contato, rodapé e o painel de chat.
 function Home() {
   const [activeAbout, setActiveAbout] = useState<AboutSectionId>("profile");
   const [displayedAbout, setDisplayedAbout] = useState<AboutSectionId>("profile");
@@ -236,6 +246,7 @@ function Home() {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
+  // Seleciona uma seção do Sobre mim e inicia a troca animada.
   const selectAbout = (sectionId: AboutSectionId) => {
     if (sectionId === requestedAbout.current) return;
 
@@ -244,6 +255,7 @@ function Home() {
     if (detailsPhase === "idle") setDetailsPhase("closing");
   };
 
+  // Conduz as fases da troca de seção: fecha, troca o conteúdo e reabre.
   const handleAboutTransitionEnd = (event: TransitionEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget || event.propertyName !== "clip-path") return;
 
@@ -255,6 +267,7 @@ function Home() {
     }
   };
 
+  // Rola até uma seção respeitando o cabeçalho fixo e leva o foco a ela.
   const scrollToSection = (sectionId: string) => {
     const section = document.getElementById(sectionId);
     if (!section) return;
@@ -271,6 +284,7 @@ function Home() {
     section.focus({ preventScroll: true });
   };
 
+  // Navegação por teclado nas abas do Sobre mim (setas, Home e End).
   const handleAboutTabKeyDown = (
     event: KeyboardEvent<HTMLButtonElement>,
     currentIndex: number,
@@ -298,6 +312,7 @@ function Home() {
 
   return (
     <>
+      {/* Cabeçalho fixo com logo e navegação. */}
       <header className="home-header">
         <nav className="home-nav home-container" aria-label="Navegação principal">
           <button
@@ -311,6 +326,7 @@ function Home() {
             <span aria-hidden="true"> /&gt;</span>
           </button>
 
+          {/* Links de navegação por seção e botão de tema. */}
           <div className="home-nav-links">
             <button
               className="home-nav-link"
@@ -345,13 +361,16 @@ function Home() {
         </nav>
       </header>
 
+      {/* Conteúdo da página. */}
       <main className="home">
+        {/* Apresentação: nome, descrição e foto. */}
         <section
           className="home-hero home-container"
           id="inicio"
           aria-labelledby="home-title"
           tabIndex={-1}
         >
+          {/* Texto da apresentação. */}
           <div className="hero-content">
             <span className="hero-eyebrow">Full-stack developer</span>
 
@@ -371,6 +390,7 @@ function Home() {
             </p>
           </div>
 
+          {/* Foto de perfil com moldura. */}
           <div className="hero-photo-wrapper">
             <div className="hero-photo-frame">
               <img
@@ -384,12 +404,14 @@ function Home() {
           </div>
         </section>
 
+        {/* Sobre mim: abas de tópicos e conteúdo com troca animada. */}
         <section
           className="home-about home-container"
           id="about"
           aria-labelledby="about-title"
           tabIndex={-1}
         >
+          {/* Título e abas de tópicos. */}
           <div className="about-heading">
             <span className="about-index" aria-hidden="true">
               01
@@ -399,6 +421,7 @@ function Home() {
             </span>
             <h2 id="about-title">Sobre mim</h2>
 
+            {/* Abas dos tópicos, navegáveis pelo teclado. */}
             <div className="about-tabs" role="tablist" aria-label="Tópicos sobre mim">
               {aboutSections.map((section, index) => (
                 <button
@@ -420,6 +443,7 @@ function Home() {
             </div>
           </div>
 
+          {/* Painel do tópico selecionado. */}
           <div
             className="about-content"
             id="about-panel"
@@ -427,11 +451,14 @@ function Home() {
             aria-labelledby={`about-tab-${currentAbout.id}`}
             tabIndex={0}
           >
+            {/* Área da troca animada de conteúdo, na altura do maior tópico. */}
             <div className="about-reveal" data-phase={detailsPhase}>
+              {/* Conteúdo visível do tópico atual. */}
               <div className="about-reveal-content" onTransitionEnd={handleAboutTransitionEnd}>
                 <AboutBody section={currentAbout} />
               </div>
 
+              {/* Cópias invisíveis de todos os tópicos que reservam a altura e evitam saltos no layout. */}
               {aboutSections.map((section) => (
                 <div className="about-sizer" key={section.id} aria-hidden="true" inert>
                   <AboutBody section={section} />
@@ -441,6 +468,7 @@ function Home() {
           </div>
         </section>
 
+        {/* Stack: tecnologias com descrição ao passar o mouse ou focar. */}
         <section
           className="home-stack home-container"
           id="stack"
@@ -453,6 +481,7 @@ function Home() {
             <h2 id="stack-title">Stack</h2>
           </div>
 
+          {/* Lista de tecnologias. */}
           <ul className="stack-list">
             {technologies.map((technology, index) => (
               <li
@@ -484,6 +513,7 @@ function Home() {
           </ul>
         </section>
 
+        {/* Contato: links diretos e currículo. */}
         <section
           className="home-contact home-container"
           id="contato"
@@ -496,6 +526,7 @@ function Home() {
             <h2 id="contact-title">Contato</h2>
           </div>
 
+          {/* Introdução e lista de contatos lado a lado. */}
           <div className="contact-layout">
             <div className="contact-intro">
               <p className="contact-eyebrow">Vamos conversar</p>
@@ -506,6 +537,7 @@ function Home() {
               </p>
             </div>
 
+            {/* Links de contato, cada um com botão para copiar. */}
             <ul className="contact-links">
               <li>
                 <CopyLinkButton value="https://github.com/Henrique-Volpini" label="Copiar link do GitHub" />
@@ -588,6 +620,7 @@ function Home() {
           </div>
         </section>
 
+        {/* Rodapé com direitos autorais e aviso de privacidade. */}
         <footer className="home-footer home-container">
           <p className="home-footer-note">© {new Date().getFullYear()} Henrique Volpini</p>
           <PrivacyNotice />

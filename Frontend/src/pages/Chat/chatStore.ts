@@ -16,9 +16,12 @@ import {
   type Perfil,
 } from "./chatApi";
 
+// Filtro da lista de conversas do operador.
 export type Filtro = "todas" | Destinatario;
+// Mensagem na interface: pode estar enviando ou ter falhado.
 export type UiMessage = Mensagem & { status?: "enviando" | "falhou"; erro?: string };
 
+// Histórico carregado de uma conversa, com paginação e último id sincronizado.
 export type Thread = {
   messages: UiMessage[];
   phase: "loading" | "ready" | "error";
@@ -28,6 +31,7 @@ export type Thread = {
   syncedId: number;
 };
 
+// Estado completo do chat: perfil, conexão, conversas, históricos e erros.
 export type ChatState = {
   phase: "loading" | "ready" | "error";
   error: string | null;
@@ -61,6 +65,7 @@ const RECONCILE_MS = 60000;
 const MAX_CATCH_UP_PAGES = 30;
 const MAX_READ_ATTEMPTS = 3;
 
+// Mescla mensagens confirmadas e novas por id, mantendo as pendentes locais no fim.
 export function mergeMessages(current: UiMessage[], incoming: Mensagem[]): UiMessage[] {
   const confirmed = new Map<number, UiMessage>();
   const pending: UiMessage[] = [];
@@ -78,25 +83,30 @@ export function mergeMessages(current: UiMessage[], incoming: Mensagem[]): UiMes
   ];
 }
 
+// Maior id entre as mensagens já confirmadas pelo servidor.
 export function lastConfirmedId(messages: UiMessage[]): number {
   return messages.reduce((highest, message) => (message.status ? highest : Math.max(highest, message.id)), 0);
 }
 
+// Conversas com mensagem, filtradas e da mais recente para a mais antiga.
 export function inboxItems(conversations: Record<string, Conversa>, filter: Filtro): Conversa[] {
   return Object.values(conversations)
     .filter((item) => item.ultima_mensagem && (filter === "todas" || item.destinatario === filter))
     .sort((a, b) => Date.parse(b.atualizada_em) - Date.parse(a.atualizada_em));
 }
 
+// Soma das mensagens não lidas de todas as conversas.
 export function totalUnread(state: ChatState): number {
   return Object.values(state.conversations).reduce((sum, conversation) => sum + conversation.nao_lidas, 0);
 }
 
+// Mensagem de erro segura para exibir ao usuário.
 function messageOf(error: unknown): string {
   if (error instanceof ApiError) return error.message;
   return "Não foi possível concluir a solicitação.";
 }
 
+// Confere se um valor recebido pelo WebSocket tem a forma de uma mensagem.
 function isMensagem(value: unknown): value is Mensagem {
   return (
     !!value &&
@@ -110,14 +120,15 @@ function isMensagem(value: unknown): value is Mensagem {
   );
 }
 
-// Leituras otimistas em voo de uma conversa: `unread` guarda as não lidas de antes da primeira
-// delas e `failedTop` o maior id cuja requisição falhou.
+// Leituras otimistas em voo: requisições, não lidas de antes da primeira e maior id que falhou.
 type PendingRead = { requests: number; unread: number; failedTop: number };
 
+// Devolve a mais recente entre duas datas ISO.
 function newerDate(a: string, b: string): string {
   return Date.parse(a) >= Date.parse(b) ? a : b;
 }
 
+// Store do chat: guarda o estado e cuida da API, do WebSocket, da sincronização e das leituras.
 export class ChatStore {
   private token: string;
   private state: ChatState = initialState;
@@ -144,10 +155,12 @@ export class ChatStore {
   private started = false;
   private onSessionExpired: () => void = () => {};
 
+  // Cria a store com o token de acesso do usuário.
   constructor(token: string) {
     this.token = token;
   }
 
+  // Registra um ouvinte de mudanças e devolve a função que o remove.
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     return () => {
@@ -155,12 +168,15 @@ export class ChatStore {
     };
   };
 
+  // Devolve o estado atual.
   getState = () => this.state;
 
+  // Define o callback chamado quando a sessão expira.
   setHandlers(handlers: { onSessionExpired: () => void }) {
     this.onSessionExpired = handlers.onSessionExpired;
   }
 
+  // Inicia a store: carrega perfil e conversas e abre a conexão em tempo real.
   start() {
     if (this.started) return;
     this.started = true;
@@ -170,6 +186,7 @@ export class ChatStore {
     void this.bootstrap();
   }
 
+  // Encerra requisições, conexão e temporizadores e limpa o estado interno.
   stop() {
     this.started = false;
     this.abort?.abort();
@@ -194,23 +211,26 @@ export class ChatStore {
     this.viewing = null;
   }
 
+  // Recarrega perfil e conversas depois de um erro.
   reload() {
     if (this.started && this.state.phase !== "loading") void this.bootstrap();
   }
 
+  // Remove o erro de abertura da caixa de entrada de um destinatário.
   clearInboxError(destinatario: Destinatario) {
     this.set((state) => ({ inboxErrors: { ...state.inboxErrors, [destinatario]: undefined } }));
   }
 
+  // Revoga o token no servidor e encerra a store; a sessão local acaba mesmo se a revogação falhar.
   async logout() {
     try {
       await encerrarSessao(this.token);
     } catch {
-      // A sessão local termina mesmo que o servidor não confirme a revogação.
     }
     this.stop();
   }
 
+  // Define a conversa em exibição, carrega seu histórico e agenda a leitura.
   setViewing(conversationId: string | null) {
     if (this.viewing === conversationId) return;
     this.viewing = conversationId;
@@ -219,6 +239,7 @@ export class ChatStore {
     this.queueRead(conversationId);
   }
 
+  // Carrega a lista de conversas (ou a próxima página) e mescla no estado.
   async loadList(filter: Filtro, more = false) {
     const signal = this.abort?.signal;
     const cursor = more ? this.state.listNext[filter] : undefined;
@@ -240,9 +261,6 @@ export class ChatStore {
       });
       this.set((state) => {
         const last = page.results[page.results.length - 1];
-        // "Carregar mais" avança o cursor, a menos que uma atualização o tenha reaberto no meio do caminho.
-        // Uma atualização da primeira página só mexe nele quando termina em conversa desconhecida: há
-        // páginas novas além dela, que o cursor atual (ou o fim da lista) deixaria inacessíveis.
         const moveCursor = more
           ? state.listNext[filter] === cursor
           : state.listNext[filter] === undefined || (!!page.next && !!last && !state.conversations[last.id]);
@@ -262,6 +280,7 @@ export class ChatStore {
     }
   }
 
+  // Devolve o id da conversa com o destinatário, criando-a uma única vez se necessário.
   openInbox(destinatario: Destinatario): Promise<string | null> {
     const existing = Object.values(this.state.conversations).find(
       (conversation) => conversation.destinatario === destinatario,
@@ -276,6 +295,7 @@ export class ChatStore {
     return pending;
   }
 
+  // Carrega a primeira página do histórico se ainda não foi carregada ou se houve erro.
   async ensureThread(conversationId: string) {
     const signal = this.abort?.signal;
     const existing = this.state.threads[conversationId];
@@ -300,6 +320,7 @@ export class ChatStore {
     }
   }
 
+  // Carrega a página de mensagens anteriores.
   async loadOlder(conversationId: string) {
     const signal = this.abort?.signal;
     const thread = this.state.threads[conversationId];
@@ -320,6 +341,7 @@ export class ChatStore {
     }
   }
 
+  // Mostra a mensagem como pendente na tela e a coloca na fila de envio.
   send(conversationId: string, text: string) {
     const content = text.trim();
     const profile = this.state.profile;
@@ -342,6 +364,7 @@ export class ChatStore {
     this.enqueue(pending);
   }
 
+  // Reenvia uma mensagem que falhou.
   retry(conversationId: string, clientId: string) {
     const message = this.state.threads[conversationId]?.messages.find(
       (item) => item.status === "falhou" && item.id_cliente === clientId,
@@ -353,6 +376,7 @@ export class ChatStore {
     this.enqueue(retrying);
   }
 
+  // Descarta uma mensagem pendente ou que falhou.
   discard(conversationId: string, clientId: string) {
     this.updateThread(conversationId, (thread) => ({
       ...thread,
@@ -360,18 +384,21 @@ export class ChatStore {
     }));
   }
 
+  // Ao voltar para a aba, sincroniza e retoma a leitura da conversa aberta.
   private onVisibility = () => {
     if (document.visibilityState !== "visible") return;
     void this.sync(false);
     if (this.viewing) this.queueRead(this.viewing);
   };
 
+  // Atualiza o estado e avisa os ouvintes.
   private set(patch: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) {
     const next = typeof patch === "function" ? patch(this.state) : patch;
     this.state = { ...this.state, ...next };
     this.listeners.forEach((listener) => listener());
   }
 
+  // Altera o histórico de uma conversa, criando-o vazio se não existir.
   private updateThread(conversationId: string, update: (thread: Thread) => Thread) {
     this.set((state) => {
       const current: Thread = state.threads[conversationId] ?? {
@@ -386,6 +413,7 @@ export class ChatStore {
     });
   }
 
+  // Troca a mensagem pendente que tem o id do cliente informado.
   private replacePending(conversationId: string, clientId: string, replacement: UiMessage) {
     this.updateThread(conversationId, (thread) => ({
       ...thread,
@@ -395,6 +423,7 @@ export class ChatStore {
     }));
   }
 
+  // Mescla conversas novas com as atuais sem retroceder marcadores de leitura nem a última mensagem.
   private mergeConversations(
     current: Record<string, Conversa>,
     incoming: Conversa[],
@@ -420,14 +449,17 @@ export class ChatStore {
     return next;
   }
 
+  // Diz se a mensagem foi escrita pelo lado de quem usa o chat.
   private isMine(message: Mensagem): boolean {
     return this.state.profile?.operador ? message.origem !== "usuario" : message.origem === "usuario";
   }
 
+  // Diz se a aba do navegador está visível.
   private isVisible(): boolean {
     return document.visibilityState === "visible";
   }
 
+  // Incorpora uma mensagem recebida ao histórico e à conversa, contando não lidas quando cabe.
   private receive(message: Mensagem) {
     const mine = this.isMine(message);
     const watching = this.viewing === message.conversa_id && this.isVisible();
@@ -462,6 +494,7 @@ export class ChatStore {
     else if (!mine && this.viewing === message.conversa_id) this.queueRead(message.conversa_id);
   }
 
+  // Busca a conversa no servidor e atualiza o estado.
   private async refreshConversation(conversationId: string) {
     const signal = this.abort?.signal;
     if (!signal) return;
@@ -474,6 +507,7 @@ export class ChatStore {
     }
   }
 
+  // Abre a conversa com o destinatário no servidor e registra falhas da caixa de entrada.
   private async createInbox(destinatario: Destinatario): Promise<string | null> {
     const signal = this.abort?.signal;
     if (!signal) return null;
@@ -492,8 +526,7 @@ export class ChatStore {
     }
   }
 
-  // O backend responde uma pergunta por vez em cada conversa com o Assistente: um envio simultâneo
-  // recebe 503. A fila preserva a ordem e deixa a resposta anterior entrar no contexto da próxima.
+  // Entrega a mensagem; com o assistente de IA usa uma fila por conversa, pois o backend responde uma pergunta por vez.
   private enqueue(message: UiMessage) {
     if (!this.answersAutomatically(message.conversa_id)) {
       void this.deliver(message);
@@ -507,6 +540,7 @@ export class ChatStore {
     });
   }
 
+  // Diz se a conversa é com o assistente de IA ativo, que responde sozinho.
   private answersAutomatically(conversationId: string): boolean {
     const { profile, conversations } = this.state;
     return (
@@ -516,6 +550,7 @@ export class ChatStore {
     );
   }
 
+  // Envia a mensagem à API, busca a resposta do assistente e marca falha se der erro.
   private async deliver(message: UiMessage) {
     const signal = this.abort?.signal;
     if (!signal) return;
@@ -529,7 +564,6 @@ export class ChatStore {
         signal,
       );
       this.receive(sent);
-      // A resposta já está gravada quando o envio retorna; buscá-la agora evita depender do WebSocket.
       if (this.answersAutomatically(message.conversa_id)) {
         await this.catchUp(message.conversa_id, signal).catch((error) => this.handleFailure(error, signal));
       }
@@ -543,6 +577,7 @@ export class ChatStore {
     }
   }
 
+  // Agenda o envio da marca de leitura, agrupando chamadas próximas.
   private queueRead(conversationId: string, delay = 350) {
     window.clearTimeout(this.readTimers.get(conversationId));
     this.readTimers.set(
@@ -554,6 +589,7 @@ export class ChatStore {
     );
   }
 
+  // Marca a conversa como lida no servidor de forma otimista, com novas tentativas em caso de falha.
   private async flushRead(conversationId: string) {
     const signal = this.abort?.signal;
     const { conversations, threads, profile } = this.state;
@@ -596,11 +632,13 @@ export class ChatStore {
     }
   }
 
+  // Registra o maior marcador de leitura confirmado pelo servidor.
   private noteConfirmedRead(conversationId: string, by: "usuario" | "henrique", messageId: number) {
     const key = `${conversationId}:${by}`;
     this.confirmedReads.set(key, Math.max(this.confirmedReads.get(key) ?? 0, messageId));
   }
 
+  // Conclui uma leitura em voo e desfaz a atualização otimista se nenhuma foi confirmada.
   private settleRead(conversationId: string, by: "usuario" | "henrique", requestedId: number, succeeded: boolean) {
     const pending = this.pendingReads.get(conversationId);
     if (!pending) return;
@@ -608,12 +646,10 @@ export class ChatStore {
     pending.requests -= 1;
     if (succeeded) pending.unread = 0;
     else pending.failedTop = Math.max(pending.failedTop, requestedId);
-    // O desfazer espera a última requisição em voo, para que cada falha não desfaça só uma parte.
     if (pending.requests > 0) return;
 
     this.pendingReads.delete(conversationId);
     const confirmed = this.confirmedReads.get(`${conversationId}:${by}`) ?? 0;
-    // Uma leitura confirmada que cobre as falhas não deixa nada a desfazer.
     if (confirmed >= pending.failedTop) return;
 
     this.set((state) => {
@@ -627,7 +663,6 @@ export class ChatStore {
           [conversationId]: {
             ...conversation,
             [field]: confirmed,
-            // Uma atualização da lista pode já ter trazido a contagem do servidor; somar contaria em dobro.
             nao_lidas: Math.max(conversation.nao_lidas, pending.unread),
           },
         },
@@ -635,6 +670,7 @@ export class ChatStore {
     });
   }
 
+  // Aplica localmente o marcador de leitura e, se pedido, zera as não lidas.
   private applyRead(conversationId: string, by: "usuario" | "henrique", messageId: number, clearUnread: boolean) {
     this.set((state) => {
       const conversation = state.conversations[conversationId];
@@ -655,6 +691,7 @@ export class ChatStore {
     });
   }
 
+  // Carrega perfil e primeira página de conversas e abre a conexão em tempo real.
   private async bootstrap() {
     const signal = this.abort?.signal;
     if (!signal) return;
@@ -676,6 +713,7 @@ export class ChatStore {
     }
   }
 
+  // Atualiza a lista e as mensagens novas (da conversa aberta ou de todas), uma sincronização por vez.
   private async sync(everyThread: boolean) {
     const signal = this.abort?.signal;
     if (!signal || !this.state.profile || !this.isVisible()) return;
@@ -710,6 +748,7 @@ export class ChatStore {
     }
   }
 
+  // Busca as mensagens novas desde o último id sincronizado; se forem demais, descarta o histórico.
   private async catchUp(conversationId: string, signal: AbortSignal) {
     const thread = this.state.threads[conversationId];
     if (thread?.phase !== "ready") return;
@@ -740,10 +779,10 @@ export class ChatStore {
     this.dropThread(conversationId);
   }
 
+  // Descarta o histórico local preservando as mensagens não enviadas e recarrega se estiver aberto.
   private dropThread(conversationId: string) {
     this.set((state) => {
       const threads = { ...state.threads };
-      // Mensagens ainda não confirmadas (enviando/falhou) só existem localmente e precisam sobreviver à recarga.
       const unsent = (threads[conversationId]?.messages ?? []).filter((message) => message.status);
       if (unsent.length === 0) {
         delete threads[conversationId];
@@ -762,6 +801,7 @@ export class ChatStore {
     if (this.viewing === conversationId) void this.ensureThread(conversationId);
   }
 
+  // Trata cancelamento e sessão expirada (401); devolve true quando o erro já foi tratado.
   private handleFailure(error: unknown, signal: AbortSignal): boolean {
     if (signal.aborted) return true;
     if (error instanceof ApiError && error.status === 401) {
@@ -771,11 +811,13 @@ export class ChatStore {
     return false;
   }
 
+  // Encerra a store e avisa que a sessão expirou.
   private expire() {
     this.stop();
     this.onSessionExpired();
   }
 
+  // Abre o WebSocket com prazo para autenticar; em falha, usa consulta periódica e reconecta.
   private connect() {
     const profile = this.state.profile;
     if (!this.started || this.socket || !profile) return;
@@ -793,6 +835,7 @@ export class ChatStore {
     this.socket = socket;
     this.authTimer = window.setTimeout(() => socket.close(), 12000);
 
+    // Lê o JSON recebido e repassa os eventos válidos.
     socket.onmessage = (event) => {
       if (typeof event.data !== "string") return;
       let data: unknown;
@@ -805,6 +848,7 @@ export class ChatStore {
       this.handleSocketEvent(socket, data as { type: string } & Record<string, unknown>);
     };
 
+    // Limpa temporizadores e reconecta, ou encerra a sessão se o servidor recusar a autenticação.
     socket.onclose = (event) => {
       window.clearTimeout(this.authTimer);
       window.clearInterval(this.pingTimer);
@@ -822,6 +866,7 @@ export class ChatStore {
     };
   }
 
+  // Trata cada tipo de evento do servidor: autenticação, mensagens, leituras e conversas.
   private handleSocketEvent(socket: WebSocket, event: { type: string } & Record<string, unknown>) {
     switch (event.type) {
       case "autenticacao.necessaria":
@@ -857,6 +902,7 @@ export class ChatStore {
     }
   }
 
+  // Aplica um evento de leitura vindo do servidor.
   private handleReadEvent(event: Record<string, unknown>) {
     const { conversa_id: conversationId, por: by, mensagem_id: messageId } = event;
     const profile = this.state.profile;
@@ -877,11 +923,13 @@ export class ChatStore {
     if (by === mySide && messageId > (myMarker ?? 0)) void this.refreshConversation(conversationId);
   }
 
+  // Atualiza o estado da conexão e liga ou desliga a consulta periódica.
   private setLink(link: ChatState["link"]) {
     if (this.state.link !== link) this.set({ link });
     this.syncPolling();
   }
 
+  // Mantém a consulta periódica ativa só quando o WebSocket não está ao vivo.
   private syncPolling() {
     const needsPolling = this.started && this.state.link !== "live";
     if (needsPolling && !this.pollTimer) {
@@ -892,6 +940,7 @@ export class ChatStore {
     }
   }
 
+  // Agenda nova conexão com espera exponencial (até 30 s) e variação aleatória.
   private scheduleReconnect() {
     window.clearTimeout(this.reconnectTimer);
     const delay = Math.min(30000, 1000 * 2 ** this.attempts) + Math.random() * 400;
@@ -899,6 +948,7 @@ export class ChatStore {
     this.reconnectTimer = window.setTimeout(() => this.connect(), delay);
   }
 
+  // Fecha o WebSocket e cancela seus temporizadores.
   private closeSocket() {
     window.clearTimeout(this.authTimer);
     window.clearInterval(this.pingTimer);

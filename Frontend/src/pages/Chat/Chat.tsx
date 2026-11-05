@@ -13,6 +13,7 @@ import type { Conversa, Destinatario, Perfil } from "./chatApi";
 import { ChatStore, inboxItems, totalUnread, type Filtro, type Thread, type UiMessage } from "./chatStore";
 import "./Chat.css";
 
+// Propriedades do chat: token, modo (mini ou tela cheia) e callbacks do painel.
 type ChatProps = {
   token: string;
   mode: "mini" | "full";
@@ -24,6 +25,7 @@ type ChatProps = {
   onSessionExpired: () => void;
 };
 
+// Linha da conversa: separador de dia ou mensagem com dados de agrupamento.
 type Row =
   | { kind: "day"; key: string; label: string }
   | { kind: "message"; key: string; message: UiMessage; mine: boolean; first: boolean; seen: boolean; index: number };
@@ -32,6 +34,7 @@ const MAX_LENGTH = 4000;
 const timeFormat = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
 const shortDayFormat = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short" });
 
+// Hook que cria a ChatStore, inscreve o componente nas mudanças e controla o início e o fim da conexão.
 function useChatStore(token: string, onSessionExpired: () => void) {
   const [store] = useState(() => new ChatStore(token));
   const state = useSyncExternalStore(store.subscribe, store.getState);
@@ -51,11 +54,13 @@ function useChatStore(token: string, onSessionExpired: () => void) {
   return { store, state };
 }
 
+// Chave do dia de uma data, para agrupar mensagens.
 function dayKey(iso: string): string {
   const date = new Date(iso);
   return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
 }
 
+// Rótulo do dia: Hoje, Ontem ou dia e mês.
 function dayLabel(iso: string): string {
   const date = new Date(iso);
   const now = new Date();
@@ -65,16 +70,19 @@ function dayLabel(iso: string): string {
   return shortDayFormat.format(date).replace(".", "");
 }
 
+// Hora (se for hoje) ou data curta, para a lista de conversas.
 function listTime(iso: string): string {
   return dayKey(iso) === dayKey(new Date().toISOString())
     ? timeFormat.format(new Date(iso))
     : shortDayFormat.format(new Date(iso)).replace(".", "");
 }
 
+// Diz se a mensagem é de quem usa o chat (operador ou visitante).
 function isOwn(message: UiMessage, operator: boolean): boolean {
   return operator ? message.origem !== "usuario" : message.origem === "usuario";
 }
 
+// Monta as linhas da conversa: separadores de dia, agrupamento por remetente e marca de visto.
 function buildRows(messages: UiMessage[], operator: boolean, otherMarker: number): Row[] {
   const rows: Row[] = [];
   let lastOwn = -1;
@@ -108,10 +116,12 @@ function buildRows(messages: UiMessage[], operator: boolean, otherMarker: number
   return rows;
 }
 
+// Rola o elemento até a posição com animação suave.
 function smoothScroll(element: HTMLElement, target: number, duration = 320) {
   const start = element.scrollTop;
   const distance = target - start;
   const startedAt = performance.now();
+  // Avança um quadro da animação de rolagem.
   const step = (now: number) => {
     const progress = Math.min(1, (now - startedAt) / duration);
     element.scrollTop = start + distance * (1 - (1 - progress) ** 3);
@@ -120,6 +130,7 @@ function smoothScroll(element: HTMLElement, target: number, duration = 320) {
   requestAnimationFrame(step);
 }
 
+// Ícone de seta para baixo (minimizar).
 function IconChevron() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
@@ -128,6 +139,7 @@ function IconChevron() {
   );
 }
 
+// Ícone de expandir para tela cheia.
 function IconExpand() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
@@ -136,6 +148,7 @@ function IconExpand() {
   );
 }
 
+// Ícone de fechar.
 function IconClose() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
@@ -144,6 +157,7 @@ function IconClose() {
   );
 }
 
+// Ícone de seta para voltar.
 function IconBack() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
@@ -152,6 +166,7 @@ function IconBack() {
   );
 }
 
+// Ícone de seta para enviar.
 function IconSend() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
@@ -160,11 +175,13 @@ function IconSend() {
   );
 }
 
+// Indicador do estado da conexão: ao vivo, conectando ou atualizando por consulta.
 function LinkStatus({ link }: { link: "connecting" | "live" | "polling" }) {
   const label = link === "live" ? "Ao vivo" : link === "connecting" ? "Conectando" : "Atualizando";
   return <span className="chat-link" data-link={link} role="img" aria-label={label} title={label} />;
 }
 
+// Abas genéricas com indicador animado e contagem opcional de não lidas.
 function Tabs<T extends string>({
   items,
   value,
@@ -203,6 +220,7 @@ function Tabs<T extends string>({
   );
 }
 
+// Placeholder animado exibido enquanto o conteúdo carrega.
 function Skeleton() {
   return (
     <div className="chat-skeleton" aria-hidden="true">
@@ -213,6 +231,7 @@ function Skeleton() {
   );
 }
 
+// Campo de escrita da mensagem, com altura automática e envio por Enter.
 function Composer({
   value,
   disabled,
@@ -235,11 +254,13 @@ function Composer({
     element.style.height = `${Math.min(element.scrollHeight, 132)}px`;
   }, [value]);
 
+  // Envia a mensagem se houver texto e o campo estiver habilitado.
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
     if (!disabled && value.trim()) onSend();
   };
 
+  // Enter envia e Shift+Enter quebra a linha; em telas de toque, Enter só quebra a linha.
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     const touchKeyboard = window.matchMedia("(pointer: coarse)").matches;
     if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && !touchKeyboard) {
@@ -250,6 +271,7 @@ function Composer({
 
   return (
     <form className="chat-composer" onSubmit={submit}>
+      {/* Campo de texto com contador perto do limite de caracteres. */}
       <div className="chat-composer-field">
         <textarea
           ref={field}
@@ -282,6 +304,7 @@ function Composer({
   );
 }
 
+// Uma mensagem da conversa, com estados de envio, falha (tentar de novo ou descartar) e visto.
 function MessageRow({
   row,
   awaitingAssistant,
@@ -303,20 +326,24 @@ function MessageRow({
       data-status={message.status}
       style={{ "--i": Math.min(index, 14) } as CSSProperties}
     >
+      {/* Nome do remetente e hora, na primeira mensagem de um grupo. */}
       {first && (
         <div className="chat-meta">
           {(!mine || message.origem === "assistente") && <span>{message.remetente.nome}</span>}
           <time dateTime={message.criada_em}>{timeFormat.format(new Date(message.criada_em))}</time>
         </div>
       )}
+      {/* Balão com o texto da mensagem. */}
       <div className="chat-bubble">
         <p>{message.conteudo}</p>
       </div>
+      {/* Aviso de envio em andamento. */}
       {message.status === "enviando" && (
         <span className="chat-state" role="status">
           {awaitingAssistant ? "Assistente respondendo…" : "Enviando…"}
         </span>
       )}
+      {/* Falha no envio, com opção de tentar de novo ou descartar. */}
       {message.status === "falhou" && (
         <span className="chat-state chat-state-error" role="alert">
           <span>{message.erro ?? "Não enviada."}</span>
@@ -333,6 +360,7 @@ function MessageRow({
   );
 }
 
+// Conversa aberta: cabeçalho, histórico rolável, botão de recentes e campo de escrita.
 function ThreadView({
   store,
   profile,
@@ -399,6 +427,7 @@ function ThreadView({
     }
   }, [firstId]);
 
+  // Registra se o histórico está perto do fim, para manter a rolagem colada nas novas mensagens.
   const handleScroll = () => {
     const element = log.current;
     if (!element) return;
@@ -407,17 +436,20 @@ function ThreadView({
     setAtBottom(nearBottom);
   };
 
+  // Carrega as mensagens anteriores e guarda a posição de rolagem para a tela não pular.
   const loadOlder = () => {
     if (!conversationId) return;
     anchor.current = log.current?.scrollHeight ?? null;
     void store.loadOlder(conversationId);
   };
 
+  // Rola suavemente até a mensagem mais recente.
   const jumpToEnd = () => {
     const element = log.current;
     if (element) smoothScroll(element, element.scrollHeight - element.clientHeight);
   };
 
+  // Envia o rascunho pela store e limpa o campo.
   const send = () => {
     if (!conversationId) return;
     stick.current = true;
@@ -427,6 +459,7 @@ function ThreadView({
 
   return (
     <section className="chat-thread" aria-label={`Conversa com ${recipientName}`}>
+      {/* Cabeçalho com botão voltar, nome do visitante e destinatário (visão do operador). */}
       {onBack && (
         <div className="chat-thread-head">
           <button className="chat-back" type="button" onClick={onBack} aria-label="Voltar para a caixa de entrada">
@@ -438,6 +471,7 @@ function ThreadView({
         </div>
       )}
 
+      {/* Histórico rolável de mensagens, anunciado a leitores de tela. */}
       <div
         className="chat-log"
         ref={log}
@@ -447,6 +481,7 @@ function ThreadView({
         data-intro={intro}
         onScroll={handleScroll}
       >
+        {/* Aviso de que o assistente ainda não responde sozinho. */}
         {assistantNote && (
           <p className="chat-note">
             O Assistente ainda não responde sozinho. Sua mensagem fica registrada e o Henrique pode
@@ -454,6 +489,7 @@ function ThreadView({
           </p>
         )}
 
+        {/* Erro ao abrir a caixa de entrada, com botão para tentar de novo. */}
         {inboxError && (
           <div className="chat-state-box" role="alert">
             <p>{inboxError}</p>
@@ -463,8 +499,10 @@ function ThreadView({
           </div>
         )}
 
+        {/* Carregamento da conversa. */}
         {!inboxError && !ready && thread?.phase !== "error" && <Skeleton />}
 
+        {/* Erro ao carregar as mensagens, com botão para tentar de novo. */}
         {thread?.phase === "error" && conversationId && (
           <div className="chat-state-box" role="alert">
             <p>{thread.error}</p>
@@ -474,12 +512,14 @@ function ThreadView({
           </div>
         )}
 
+        {/* Botão para carregar as mensagens anteriores. */}
         {ready && thread.olderNext && (
           <button className="chat-older" type="button" onClick={loadOlder} disabled={thread.loadingOlder}>
             {thread.loadingOlder ? "Carregando…" : "Mensagens anteriores"}
           </button>
         )}
 
+        {/* Conversa ainda sem mensagens. */}
         {ready && rows.length === 0 && (
           <div className="chat-empty">
             <p>Nenhuma mensagem ainda.</p>
@@ -489,6 +529,7 @@ function ThreadView({
           </div>
         )}
 
+        {/* Separadores de dia e mensagens, em ordem cronológica. */}
         {rows.map((row) =>
           row.kind === "day" ? (
             <div className="chat-day" key={row.key}>
@@ -506,6 +547,7 @@ function ThreadView({
         )}
       </div>
 
+      {/* Botão para voltar às mensagens mais recentes. */}
       {!atBottom && rows.length > 0 && (
         <button className="chat-jump" type="button" onClick={jumpToEnd}>
           Mais recentes <span aria-hidden="true">↓</span>
@@ -524,6 +566,7 @@ function ThreadView({
   );
 }
 
+// Lista de conversas do operador, com estados de erro, vazio e carregamento.
 function ConversationList({
   conversations,
   filter,
@@ -547,6 +590,7 @@ function ConversationList({
 
   if (error && items.length === 0) {
     return (
+      // Falha ao carregar a lista, com botão para tentar de novo.
       <div className="chat-state-box" role="alert">
         <p>{error}</p>
         <button type="button" onClick={onRetry}>
@@ -560,6 +604,7 @@ function ConversationList({
     return loading || hasMore ? (
       <Skeleton />
     ) : (
+      // Lista vazia, com dica de onde as mensagens aparecem.
       <div className="chat-empty">
         <p>Nenhuma conversa por aqui.</p>
         <p className="chat-empty-hint">As mensagens dos visitantes aparecem nesta lista.</p>
@@ -568,7 +613,9 @@ function ConversationList({
   }
 
   return (
+    // Conversas da mais recente para a mais antiga.
     <ul className="chat-list">
+      {/* Uma linha por conversa, com nome, hora, prévia, destinatário e não lidas. */}
       {items.map((item, index) => {
         const last = item.ultima_mensagem;
         const fromMe = !!last && last.origem !== "usuario";
@@ -595,6 +642,7 @@ function ConversationList({
           </li>
         );
       })}
+      {/* Botão para carregar mais conversas. */}
       {hasMore && (
         <li>
           <button className="chat-older" type="button" onClick={onMore} disabled={loading}>
@@ -606,6 +654,7 @@ function ConversationList({
   );
 }
 
+// Componente do chat: conexão e abas de destinatário para o visitante, caixa de entrada para o operador.
 function Chat({
   token,
   mode,
@@ -638,9 +687,12 @@ function Chat({
   const inboxError = operator ? undefined : state.inboxErrors[inbox];
   const unread = totalUnread(state);
 
+  // Nome exibido do destinatário.
   const nameOf = (id: Destinatario) =>
     profile?.destinatarios.find((item) => item.id === id)?.nome ?? (id === "henrique" ? "Henrique" : "Assistente");
+  // Nome do destinatário com artigo, para usar em frases.
   const phraseOf = (id: Destinatario) => `${id === "assistente" ? "o " : ""}${nameOf(id)}`;
+  // Não lidas na conversa com o destinatário.
   const unreadOf = (id: Destinatario) =>
     Object.values(conversations).find((item) => item.destinatario === id)?.nao_lidas ?? 0;
 
@@ -670,12 +722,14 @@ function Chat({
     }
   }, [store, ready, visible, selectedId, emptyInbox, hasMoreConversations, listLoading, listError, filter]);
 
+  // Encerra a sessão no servidor e avisa o painel.
   const handleLogout = async () => {
     setLoggingOut(true);
     await store.logout();
     onLogout();
   };
 
+  // Limpa o erro da caixa de entrada para tentar abri-la de novo.
   const retryInbox = () => store.clearInboxError(inbox);
 
   const headline = operator
@@ -692,12 +746,15 @@ function Chat({
   const draftKey = currentId ?? `inbox:${inbox}`;
 
   return (
+    // Raiz do chat: barra superior e corpo.
     <div
       className="chat"
       data-mode={mode}
       data-minimized={minimized}
     >
+      {/* Barra superior: conexão, título e ações. */}
       <header className="chat-top">
+        {/* Indicador de conexão e rótulo (ou nome do destinatário quando minimizado). */}
         <div className="chat-id">
           <LinkStatus link={state.link} />
           {minimized ? (
@@ -707,6 +764,7 @@ function Chat({
           )}
         </div>
 
+        {/* Ações: contador de não lidas, minimizar ou expandir, sair ou fechar. */}
         <div className="chat-actions">
           {mode === "mini" && minimized && unread > 0 && (
             <span className="chat-dot" aria-label={`${unread} não lidas`}>
@@ -747,6 +805,7 @@ function Chat({
         </div>
       </header>
 
+      {/* Corpo do chat: título, carregamento, erros e conversa ou lista. */}
       <div className="chat-body" aria-hidden={minimized} inert={minimized}>
         {mode === "full" && (
           <h2 className="chat-title" key={headline}>
@@ -756,6 +815,7 @@ function Chat({
 
         {state.phase === "loading" && <Skeleton />}
 
+        {/* Erro ao carregar o chat, com botão para tentar de novo. */}
         {state.phase === "error" && (
           <div className="chat-state-box" role="alert">
             <p>{state.error}</p>
@@ -765,6 +825,7 @@ function Chat({
           </div>
         )}
 
+        {/* Visão do visitante: abas de destinatário e a conversa. */}
         {ready && !operator && (
           <>
             <Tabs
@@ -793,6 +854,7 @@ function Chat({
           </>
         )}
 
+        {/* Visão do operador: filtros e lista de conversas. */}
         {ready && operator && !selectedId && (
           <>
             <Tabs
@@ -818,6 +880,7 @@ function Chat({
           </>
         )}
 
+        {/* Visão do operador: conversa selecionada. */}
         {ready && operator && selectedId && (
           <ThreadView
             key={selectedId}

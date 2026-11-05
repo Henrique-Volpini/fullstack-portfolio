@@ -42,8 +42,8 @@ from .views.chat import (
 )
 
 
+# Isola as credenciais de teste e bloqueia requisições HTTP reais.
 def setUpModule():
-    # Nunca herdar as credenciais reais do .env durante os testes.
     configuracao = override_settings(
         GOOGLE_CLIENT_ID="cliente-google.apps.googleusercontent.com",
         GEMINI_API_KEY="",
@@ -52,7 +52,6 @@ def setUpModule():
     configuracao.enable()
     addModuleCleanup(configuracao.disable)
 
-    # Os mocks locais continuam funcionando; uma chamada esquecida falha sem rede.
     transporte = patch(
         "requests.sessions.Session.request",
         side_effect=AssertionError("HTTP real bloqueado nos testes; use mocks."),
@@ -61,11 +60,14 @@ def setUpModule():
     addModuleCleanup(transporte.stop)
 
 
+# Verifica o isolamento dos serviços externos durante os testes.
 class IsolamentoServicosExternosTests(SimpleTestCase):
+    # Confere que os testes não herdam credenciais reais.
     def test_configuracao_padrao_nao_usa_credenciais_reais(self):
         self.assertTrue(settings.GEMINI_API_KEY == "")
         self.assertEqual(settings.GOOGLE_CLIENT_ID, "cliente-google.apps.googleusercontent.com")
 
+    # Confere o bloqueio de consultas Google sem transporte simulado.
     def test_consulta_google_sem_mock_e_bloqueada_antes_do_transporte(self):
         from .views.google import GOOGLE_CERTIFICADOS_URL, _requisitar_certificados_google
 
@@ -75,6 +77,7 @@ class IsolamentoServicosExternosTests(SimpleTestCase):
                     _requisitar_certificados_google(GOOGLE_CERTIFICADOS_URL)
                 enviar.assert_not_called()
 
+    # Confere o bloqueio de chamadas Gemini sem transporte simulado.
     @override_settings(GEMINI_API_KEY="chave-teste")
     def test_gemini_sem_mock_e_bloqueado_antes_do_transporte(self):
         from .ia import gerar_resposta
@@ -85,7 +88,9 @@ class IsolamentoServicosExternosTests(SimpleTestCase):
             enviar.assert_not_called()
 
 
+# Monta uma credencial Google fictícia com estrutura e tamanho controlados.
 def credencial_google_teste(cabecalho=None, perfil=None, *, tamanho=None):
+    # Codifica um trecho JSON como parte de um JWT sem preenchimento.
     def codificar(valor):
         return urlsafe_b64encode(
             json.dumps(valor, separators=(",", ":")).encode("utf-8")
@@ -107,13 +112,16 @@ def credencial_google_teste(cabecalho=None, perfil=None, *, tamanho=None):
 CREDENCIAL_GOOGLE_TESTE = credencial_google_teste()
 
 
+# Verifica limites de tentativas, bloqueios e emissão de tokens.
 @override_settings(PASSWORD_HASHERS=["django.contrib.auth.hashers.MD5PasswordHasher"])
 class ProtecaoAutenticacaoTests(APITestCase):
+    # Prepara a tabela usada pelo cache de autenticação.
     @classmethod
     def setUpClass(cls):
         call_command("createcachetable", verbosity=0)
         super().setUpClass()
 
+    # Cria o usuário compartilhado pelos testes de login.
     @classmethod
     def setUpTestData(cls):
         cls.password = "SenhaForte!93q8z7"
@@ -121,9 +129,11 @@ class ProtecaoAutenticacaoTests(APITestCase):
             username="usuario_teste", password=cls.password
         )
 
+    # Limpa o cache antes de cada cenário de autenticação.
     def setUp(self):
         cache.clear()
 
+    # Envia um login local com senha, IP e cabeçalhos configuráveis.
     def login(self, password=None, ip="192.0.2.1", **headers):
         return self.client.post(
             "/login/",
@@ -132,6 +142,7 @@ class ProtecaoAutenticacaoTests(APITestCase):
             format="json", REMOTE_ADDR=ip, **headers,
         )
 
+    # Confere o limite de vinte tentativas de login por minuto e IP.
     def test_login_limitado_a_20_requisicoes_por_minuto_por_ip(self):
         for _ in range(20):
             self.assertEqual(self.login().status_code, 200)
@@ -140,6 +151,7 @@ class ProtecaoAutenticacaoTests(APITestCase):
         self.assertGreater(int(resposta["Retry-After"]), 0)
         self.assertEqual(self.login(ip="192.0.2.2").status_code, 200)
 
+    # Confere o limite de cinco cadastros por hora e IP.
     def test_cadastro_limitado_a_5_requisicoes_por_hora(self):
         for _ in range(5):
             resposta = self.client.post("/usuarios/", {}, format="json", REMOTE_ADDR="192.0.2.1")
@@ -148,11 +160,13 @@ class ProtecaoAutenticacaoTests(APITestCase):
         self.assertEqual(resposta.status_code, 429)
         self.assertEqual(self.login().status_code, 200)
 
+    # Confere que um cabeçalho de proxy forjado não contorna o limite.
     def test_x_forwarded_for_nao_contorna_limite(self):
         for indice in range(20):
             self.assertEqual(self.login(HTTP_X_FORWARDED_FOR=f"198.51.100.{indice}").status_code, 200)
         self.assertEqual(self.login(HTTP_X_FORWARDED_FOR="203.0.113.1").status_code, 429)
 
+    # Confere a liberação da cota de login após um minuto.
     def test_cota_de_login_reabre_apos_um_minuto(self):
         agora = time()
         with patch("rest_framework.throttling.SimpleRateThrottle.timer", return_value=agora):
@@ -162,6 +176,7 @@ class ProtecaoAutenticacaoTests(APITestCase):
         with patch("rest_framework.throttling.SimpleRateThrottle.timer", return_value=agora + 60):
             self.assertEqual(self.login().status_code, 200)
 
+    # Confere a liberação da cota de cadastro após uma hora.
     def test_cota_de_cadastro_reabre_apos_uma_hora(self):
         agora = time()
         with patch("rest_framework.throttling.SimpleRateThrottle.timer", return_value=agora):
@@ -173,6 +188,7 @@ class ProtecaoAutenticacaoTests(APITestCase):
             resposta = self.client.post("/usuarios/", {}, format="json", REMOTE_ADDR="192.0.2.1")
             self.assertEqual(resposta.status_code, 400)
 
+    # Confere que a quinta senha errada bloqueia a conta sem emitir token.
     def test_quinto_erro_bloqueia_conta_e_nao_emite_token(self):
         for _ in range(4):
             self.assertEqual(self.login(password="errada").status_code, 401)
@@ -182,6 +198,7 @@ class ProtecaoAutenticacaoTests(APITestCase):
         self.assertEqual(self.login(ip="192.0.2.2").status_code, 429)
         self.assertFalse(Token.objects.filter(user=self.usuario).exists())
 
+    # Confere que trocar os dados do cliente não remove o bloqueio da conta.
     def test_trocar_ip_navegador_e_cookie_nao_contorna_bloqueio(self):
         for indice in range(5):
             resposta = self.login(
@@ -199,6 +216,7 @@ class ProtecaoAutenticacaoTests(APITestCase):
         )
         self.assertEqual(resposta.status_code, 200)
 
+    # Confere o desbloqueio após quinze minutos sem prolongar a espera.
     def test_bloqueio_expira_em_15_minutos_sem_prorrogacao(self):
         agora = timezone.now()
         with patch("axes.handlers.proxy.now", return_value=agora):
@@ -210,6 +228,7 @@ class ProtecaoAutenticacaoTests(APITestCase):
         with patch("axes.handlers.proxy.now", return_value=agora + timedelta(minutes=15, seconds=1)):
             self.assertEqual(self.login().status_code, 200)
 
+    # Confere a limpeza das falhas anteriores após um login correto.
     def test_login_correto_limpa_erros_anteriores(self):
         for _ in range(4):
             self.assertEqual(self.login(password="errada").status_code, 401)
@@ -218,6 +237,7 @@ class ProtecaoAutenticacaoTests(APITestCase):
             self.assertEqual(self.login(password="errada").status_code, 401)
         self.assertEqual(self.login(password="errada").status_code, 429)
 
+    # Confere o mesmo bloqueio para nomes de usuário inexistentes.
     def test_usuario_inexistente_recebe_mesmo_bloqueio(self):
         for indice in range(5):
             resposta = self.client.post(
@@ -226,6 +246,7 @@ class ProtecaoAutenticacaoTests(APITestCase):
             )
             self.assertEqual(resposta.status_code, 401 if indice < 4 else 429)
 
+    # Confere o acesso com uma conta recém-cadastrada.
     def test_cadastro_seguido_de_login_continua_funcionando(self):
         resposta = self.client.post(
             "/usuarios/", {"username": "novo_usuario", "password": self.password},
@@ -240,6 +261,7 @@ class ProtecaoAutenticacaoTests(APITestCase):
         self.assertIn("token", resposta.json())
         self.assertNotIn("sessionid", resposta.cookies)
 
+    # Confere que um novo login preserva o vencimento de um token válido.
     @override_settings(AUTH_TOKEN_TTL_SECONDS=3600)
     def test_novo_login_nao_prorroga_token_ainda_valido(self):
         token = Token.objects.create(user=self.usuario)
@@ -250,6 +272,7 @@ class ProtecaoAutenticacaoTests(APITestCase):
         self.assertEqual(resposta.json()["token"], token.key)
         self.assertEqual(Token.objects.get(user=self.usuario).created, criado)
 
+    # Confere que usuários desativados não recebem token.
     def test_login_de_usuario_desativado_nao_emite_token(self):
         get_user_model().objects.filter(pk=self.usuario.pk).update(is_active=False)
         self.assertEqual(self.login().status_code, 401)
@@ -265,7 +288,9 @@ CONFIG_TESTES = {
 }
 
 
+# Verifica o limite de corpo HTTP aplicado antes do processamento Django.
 class ServidorHTTPTests(SimpleTestCase):
+    # Monta um canal Daphne com transporte local para inspecionar respostas.
     def abrir_canal_daphne(self):
         from daphne.http_protocol import HTTPFactory
         from config.asgi import RequisicaoHTTPLimitada
@@ -282,6 +307,7 @@ class ServidorHTTPTests(SimpleTestCase):
         self.addCleanup(canal.connectionLost, None)
         return canal._channel, transporte
 
+    # Confere a rejeição imediata de um corpo declarado acima do limite.
     def test_rejeita_corpo_declarado_grande_antes_de_receber_bytes(self):
         from config.asgi import RequisicaoHTTPLimitada
 
@@ -298,6 +324,7 @@ class ServidorHTTPTests(SimpleTestCase):
         self.assertTrue(canal.requests[0].content.closed)
         processar.assert_not_called()
 
+    # Confere a contagem e a interrupção de corpos recebidos em partes.
     def test_chunked_conta_bytes_e_interrompe_ao_exceder_sem_content_length(self):
         from config.asgi import RequisicaoHTTPLimitada
 
@@ -308,7 +335,6 @@ class ServidorHTTPTests(SimpleTestCase):
                 b"POST /login/ HTTP/1.1\r\nHost: testserver\r\n"
                 b"Transfer-Encoding: chunked\r\n\r\n"
             )
-            # Uma única unidade chunked recebida em partes, ainda sem terminador.
             canal.dataReceived(f"{limite + 1000:x}\r\n".encode() + b"x" * limite)
             self.assertEqual(canal.requests[0].content.tell(), limite)
             self.assertEqual(transporte.value(), b"")
@@ -316,11 +342,11 @@ class ServidorHTTPTests(SimpleTestCase):
             self.assertIn(b" 413 ", transporte.value().split(b"\r\n", 1)[0])
             self.assertTrue(transporte.disconnecting)
             self.assertTrue(canal.requests[0].content.closed)
-            # Dados que já estavam em trânsito não podem reabrir o processamento.
             canal.dataReceived(b"x" * 999 + b"\r\n0\r\n\r\n")
         self.assertEqual(transporte.value().count(b" 413 "), 1)
         processar.assert_not_called()
 
+    # Confere a rejeição de um corpo excessivo recebido junto dos cabeçalhos.
     def test_corpo_excessivo_no_mesmo_pacote_dos_cabecalhos_nao_e_armazenado(self):
         from config.asgi import RequisicaoHTTPLimitada
 
@@ -336,6 +362,7 @@ class ServidorHTTPTests(SimpleTestCase):
         self.assertTrue(transporte.disconnecting)
         processar.assert_not_called()
 
+    # Confere a aceitação do limite exato com corpo comum ou em partes.
     def test_aceita_corpo_exatamente_no_limite_com_e_sem_content_length(self):
         from config.asgi import RequisicaoHTTPLimitada
 
@@ -360,8 +387,10 @@ class ServidorHTTPTests(SimpleTestCase):
                 self.assertFalse(transporte.disconnecting)
 
 
+# Verifica a geração de texto e as falhas do provedor Gemini.
 @override_settings(GEMINI_API_KEY="chave-privada-teste", GEMINI_MODEL="gemini-3.5-flash-lite")
 class GeminiTests(SimpleTestCase):
+    # Prepara o transporte simulado e uma resposta textual do provedor.
     def setUp(self):
         from . import ia
 
@@ -376,6 +405,7 @@ class GeminiTests(SimpleTestCase):
         self.texto_resposta = "Henrique usa Python e Django no backend e React com TypeScript no frontend."
         self.simular_resposta(self.texto_resposta)
 
+    # Monta a resposta simulada do provedor com o texto informado.
     def simular_resposta(self, texto):
         self.resposta.json.return_value = {
             "candidates": [{
@@ -384,6 +414,7 @@ class GeminiTests(SimpleTestCase):
             }],
         }
 
+    # Confere que o texto autoral do modelo é preservado.
     def test_respostas_redigidas_pelo_modelo_nao_sao_substituidas_por_blocos_fixos(self):
         respostas = (
             self.texto_resposta,
@@ -394,6 +425,7 @@ class GeminiTests(SimpleTestCase):
                 self.simular_resposta(resposta)
                 self.assertEqual(self.ia.gerar_resposta(self.historico), resposta)
 
+    # Confere o histórico limitado e o envio da chave apenas no cabeçalho.
     def test_requisicao_usa_texto_historico_limitado_e_chave_somente_no_cabecalho(self):
         historico = [
             {"role": "user", "parts": [{"text": f"Pergunta {numero}"}]}
@@ -417,11 +449,13 @@ class GeminiTests(SimpleTestCase):
         self.assertNotIn("responseSchema", configuracao)
         self.assertNotIn("temperature", configuracao)
 
+    # Confere que a recusa redigida pelo modelo é preservada.
     def test_recusa_redigida_pelo_modelo_e_preservada(self):
         resposta = "Só posso ajudar com as informações profissionais do portfólio de Henrique."
         self.simular_resposta(resposta)
         self.assertEqual(self.ia.gerar_resposta(self.historico), resposta)
 
+    # Confere a rejeição de textos inválidos antes da publicação.
     def test_textos_invalidos_nao_sao_publicados(self):
         textos = (
             "", "  ", "x" * 4001, "Texto com \x00", "Texto com \ud800",
@@ -433,11 +467,13 @@ class GeminiTests(SimpleTestCase):
                 with self.assertRaises(self.ia.AssistenteIndisponivel):
                     self.ia.gerar_resposta(self.historico)
 
+    # Confere a aceitação de quatro mil caracteres após aparar espaços.
     def test_texto_no_limite_e_espacos_externos_sao_aceitos(self):
         texto = "x" * 4000
         self.simular_resposta(f"  {texto}\n")
         self.assertEqual(self.ia.gerar_resposta(self.historico), texto)
 
+    # Confere que respostas malformadas viram erros sem detalhes internos.
     def test_resposta_malformada_do_provedor_vira_erro_controlado(self):
         respostas = (
             None, [], {}, {"candidates": []}, {"candidates": [{}]},
@@ -454,6 +490,7 @@ class GeminiTests(SimpleTestCase):
             self.ia.gerar_resposta(self.historico)
         self.assertNotIn("detalhe interno", str(erro.exception))
 
+    # Confere que falhas de rede não expõem detalhes ou credenciais.
     def test_timeout_e_falha_de_rede_nao_expoem_detalhes(self):
         from requests.exceptions import ConnectionError, Timeout
 
@@ -465,6 +502,7 @@ class GeminiTests(SimpleTestCase):
                 self.assertNotIn("detalhe interno", str(erro.exception))
                 self.assertNotIn("chave-privada-teste", str(erro.exception))
 
+    # Confere a rejeição de erros HTTP e redirecionamentos do provedor.
     def test_erros_http_e_redirecionamentos_nao_aceitam_corpo_do_provedor(self):
         for status in (301, 400, 429, 503):
             with self.subTest(status=status):
@@ -473,6 +511,7 @@ class GeminiTests(SimpleTestCase):
                     self.ia.gerar_resposta(self.historico)
         self.resposta.json.assert_not_called()
 
+    # Confere a resposta de recusa diante de bloqueios de segurança.
     def test_bloqueios_de_seguranca_retornam_fora_do_escopo(self):
         self.resposta.json.return_value = {"promptFeedback": {"blockReason": "SAFETY"}}
         self.assertEqual(self.ia.gerar_resposta(self.historico), self.ia.RESPOSTA_FORA_ESCOPO)
@@ -481,6 +520,7 @@ class GeminiTests(SimpleTestCase):
                 self.resposta.json.return_value = {"candidates": [{"finishReason": motivo}]}
                 self.assertEqual(self.ia.gerar_resposta(self.historico), self.ia.RESPOSTA_FORA_ESCOPO)
 
+    # Confere que uma geração incompleta não publica texto parcial.
     def test_geracao_truncada_ou_nao_concluida_nao_publica_resposta_parcial(self):
         for motivo in ("MAX_TOKENS", "OTHER", None):
             with self.subTest(motivo=motivo):
@@ -489,6 +529,7 @@ class GeminiTests(SimpleTestCase):
                 with self.assertRaises(self.ia.AssistenteIndisponivel):
                     self.ia.gerar_resposta(self.historico)
 
+    # Confere a exclusão do raciocínio interno do texto público.
     def test_partes_de_raciocinio_nao_entram_na_resposta_publica(self):
         self.resposta.json.return_value = {"candidates": [{
             "finishReason": "STOP", "content": {"parts": [
@@ -499,6 +540,7 @@ class GeminiTests(SimpleTestCase):
         }]}
         self.assertEqual(self.ia.gerar_resposta(self.historico), self.texto_resposta)
 
+    # Confere que chave ausente ou modelo inválido impede a consulta externa.
     def test_sem_chave_ou_com_modelo_invalido_nao_consulta_rede(self):
         with override_settings(GEMINI_API_KEY=""):
             self.assertFalse(self.ia.assistente_ativo())
@@ -511,8 +553,10 @@ class GeminiTests(SimpleTestCase):
         self.transporte.assert_not_called()
 
 
+# Verifica o cadastro e o acesso por credenciais Google validadas.
 @override_settings(**CONFIG_TESTES, GOOGLE_CLIENT_ID="cliente-google.apps.googleusercontent.com")
 class LoginGoogleTests(APITestCase):
+    # Prepara os dados Google e o verificador simulado para cada cenário.
     def setUp(self):
         cache.clear()
         self.claims = {
@@ -528,17 +572,20 @@ class LoginGoogleTests(APITestCase):
         self.verificador = verificador.start()
         self.addCleanup(verificador.stop)
 
+    # Envia uma tentativa de login Google com dados configuráveis.
     def login(self, dados=None, **headers):
         return self.client.post(
             "/login/google/", {"credential": CREDENCIAL_GOOGLE_TESTE} if dados is None else dados,
             format="json", REMOTE_ADDR="192.0.2.10", **headers,
         )
 
+    # Confere que não foram criados usuários, vínculos ou tokens.
     def verificar_sem_contas(self):
         self.assertEqual(get_user_model().objects.count(), 0)
         self.assertEqual(ContaGoogle.objects.count(), 0)
         self.assertEqual(Token.objects.count(), 0)
 
+    # Confere a criação da conta Google sem senha local utilizável.
     def test_login_cria_conta_com_senha_inutilizavel_e_retorna_token_da_api(self):
         self.claims.update({"is_staff": True, "is_superuser": True})
         resposta = self.login()
@@ -566,6 +613,7 @@ class LoginGoogleTests(APITestCase):
         self.assertEqual(audience, "cliente-google.apps.googleusercontent.com")
         self.assertNotIn("sessionid", resposta.cookies)
 
+    # Confere o limite de cento e cinquenta caracteres dos nomes Google.
     def test_nomes_sao_limitados_a_150_caracteres(self):
         self.claims.update({"given_name": "A" * 151, "family_name": "B" * 151})
         self.assertEqual(self.login().status_code, 200)
@@ -573,6 +621,7 @@ class LoginGoogleTests(APITestCase):
         self.assertEqual(usuario.first_name, "A" * 150)
         self.assertEqual(usuario.last_name, "B" * 150)
 
+    # Confere o login Google quando nome e sobrenome não foram fornecidos.
     def test_nomes_opcionais_nao_impedem_login(self):
         self.claims.pop("given_name")
         self.claims.pop("family_name")
@@ -580,6 +629,7 @@ class LoginGoogleTests(APITestCase):
         usuario = get_user_model().objects.get()
         self.assertEqual((usuario.first_name, usuario.last_name), ("", ""))
 
+    # Confere o reaproveitamento do vínculo Google apesar de mudanças no e-mail.
     def test_mesmo_sub_reutiliza_usuario_e_token_mesmo_com_email_alterado(self):
         primeira = self.login()
         self.assertEqual(primeira.status_code, 200)
@@ -594,6 +644,7 @@ class LoginGoogleTests(APITestCase):
         self.assertEqual(Token.objects.count(), 1)
         self.assertEqual(Token.objects.get().created, criado)
 
+    # Confere a renovação do token Google no instante de vencimento.
     def test_novo_login_google_renova_token_no_limite_exato_de_validade(self):
         primeira = self.login()
         self.assertEqual(primeira.status_code, 200)
@@ -614,6 +665,7 @@ class LoginGoogleTests(APITestCase):
         self.assertEqual(self.client.get("/chat/").status_code, 200)
         self.assertNotIn("sessionid", segunda.cookies)
 
+    # Confere que e-mails iguais não vinculam contas locais ao Google.
     def test_email_de_contas_locais_inclusive_admin_nao_associa_usuarios(self):
         usuarios = get_user_model()
         local = usuarios.objects.create_user(username="local", email=self.claims["email"])
@@ -627,6 +679,7 @@ class LoginGoogleTests(APITestCase):
         self.assertEqual(usuarios.objects.count(), 3)
         self.assertFalse(Token.objects.filter(user__in=(local, admin)).exists())
 
+    # Confere contas distintas para identificadores Google diferentes.
     def test_dois_subs_com_mesmo_email_criam_contas_distintas(self):
         primeira = self.login()
         self.claims["sub"] = "outro-sub-google"
@@ -637,6 +690,7 @@ class LoginGoogleTests(APITestCase):
         self.assertEqual(get_user_model().objects.count(), 2)
         self.assertEqual(ContaGoogle.objects.count(), 2)
 
+    # Confere que uma conta Google vinculada e inativa não recebe token.
     def test_usuario_vinculado_inativo_nao_recebe_token(self):
         usuario = get_user_model().objects.create_user(username="inativo", is_active=False)
         ContaGoogle.objects.create(sub=self.claims["sub"], usuario=usuario)
@@ -645,10 +699,12 @@ class LoginGoogleTests(APITestCase):
         self.assertFalse(Token.objects.exists())
         self.assertEqual(get_user_model().objects.count(), 1)
 
+    # Confere que o login público ignora um token local inválido no cabeçalho.
     def test_login_publico_ignora_header_de_token_invalido(self):
         resposta = self.login(HTTP_AUTHORIZATION="Token token-invalido")
         self.assertEqual(resposta.status_code, 200)
 
+    # Confere que falhas de validação Google não criam contas nem expõem detalhes.
     def test_erros_de_verificacao_nao_criam_conta_nem_expoem_detalhes(self):
         for erro in (
             ValueError("assinatura invalida: detalhe interno"),
@@ -661,6 +717,7 @@ class LoginGoogleTests(APITestCase):
                 self.assertNotIn("detalhe interno", str(resposta.json()))
                 self.verificar_sem_contas()
 
+    # Confere a resposta 503 quando o transporte Google falha.
     def test_falha_de_transporte_retorna_503_sem_criar_conta(self):
         self.verificador.side_effect = TransportError("detalhe interno")
         resposta = self.login()
@@ -668,6 +725,7 @@ class LoginGoogleTests(APITestCase):
         self.assertNotIn("detalhe interno", str(resposta.json()))
         self.verificar_sem_contas()
 
+    # Confere que o login Google sem client ID não consulta o verificador.
     @override_settings(GOOGLE_CLIENT_ID="")
     def test_client_id_ausente_desabilita_login_sem_validacao_externa(self):
         resposta = self.login()
@@ -675,6 +733,7 @@ class LoginGoogleTests(APITestCase):
         self.verificador.assert_not_called()
         self.verificar_sem_contas()
 
+    # Confere a rejeição de dados de identidade Google inválidos.
     def test_claims_invalidas_sao_rejeitadas_sem_criar_contas(self):
         invalidas = (
             {"sub": None}, {"sub": ""}, {"sub": []}, {"sub": 123}, {"sub": "s" * 256},
@@ -695,6 +754,7 @@ class LoginGoogleTests(APITestCase):
                 self.assertEqual(self.login().status_code, 401)
                 self.verificar_sem_contas()
 
+    # Confere os limites aceitos para credencial, identificador e e-mail.
     def test_limites_validos_de_credential_sub_e_email_sao_aceitos(self):
         self.claims.update({
             "sub": "s" * 255,
@@ -707,6 +767,7 @@ class LoginGoogleTests(APITestCase):
         self.assertEqual(ContaGoogle.objects.get().sub, self.claims["sub"])
         self.assertEqual(get_user_model().objects.get().email, self.claims["email"])
 
+    # Confere a rejeição de entradas inválidas antes da validação Google.
     def test_payloads_invalidos_retornam_400_sem_verificar_no_google(self):
         for dados in (
             {}, {"credential": None}, {"credential": ""}, {"credential": " "},
@@ -719,6 +780,7 @@ class LoginGoogleTests(APITestCase):
         self.verificador.assert_not_called()
         self.verificar_sem_contas()
 
+    # Confere a rejeição de JWT malformado antes do verificador ou da rede.
     def test_jwt_malformado_retorna_400_sem_verificador_ou_rede(self):
         cabecalho, corpo, assinatura = CREDENCIAL_GOOGLE_TESTE.split(".")
         invalidas = (
@@ -745,6 +807,7 @@ class LoginGoogleTests(APITestCase):
         self.verificador.assert_not_called()
         self.verificar_sem_contas()
 
+    # Confere a restrição do login Google a requisições POST com JSON.
     def test_aceita_apenas_post_json(self):
         formulario = self.client.post("/login/google/", {"credential": CREDENCIAL_GOOGLE_TESTE})
         self.assertEqual(formulario.status_code, 415)
@@ -756,6 +819,7 @@ class LoginGoogleTests(APITestCase):
         self.verificador.assert_not_called()
         self.verificar_sem_contas()
 
+    # Confere a rejeição de codificações comprimidas antes da leitura do JSON.
     @override_settings(DATA_UPLOAD_MAX_MEMORY_SIZE=1024)
     def test_rejeita_charset_de_compressao_antes_de_expandir_json(self):
         corpo = json.dumps({
@@ -775,6 +839,7 @@ class LoginGoogleTests(APITestCase):
         self.verificador.assert_not_called()
         self.verificar_sem_contas()
 
+    # Confere a reversão do usuário quando a gravação do vínculo falha.
     def test_falha_ao_gravar_vinculo_reverte_criacao_do_usuario(self):
         with patch.object(ContaGoogle, "save", side_effect=IntegrityError("detalhe interno")):
             resposta = self.login()
@@ -782,6 +847,7 @@ class LoginGoogleTests(APITestCase):
         self.assertNotIn("detalhe interno", str(resposta.json()))
         self.verificar_sem_contas()
 
+    # Confere a resposta 503 sem detalhes quando o banco está indisponível.
     def test_banco_indisponivel_retorna_503_sem_expor_detalhes(self):
         with patch(
             "django.db.backends.utils.CursorWrapper.execute",
@@ -792,6 +858,7 @@ class LoginGoogleTests(APITestCase):
         self.assertNotIn("detalhe interno", str(resposta.json()))
         self.verificar_sem_contas()
 
+    # Confere a cota por IP compartilhada entre os dois tipos de login.
     def test_limite_por_ip_e_compartilhado_com_login_por_senha(self):
         usuario = get_user_model().objects.create_user(username="local", password="Senha93!")
         for _ in range(19):
@@ -812,6 +879,7 @@ class LoginGoogleTests(APITestCase):
         )
         self.assertEqual(outro_ip.status_code, 200)
 
+    # Confere o acesso ao chat com token Google e sua revogação no logout.
     def test_token_google_autentica_chat_e_logout_revoga_acesso(self):
         login = self.login()
         self.assertEqual(login.status_code, 200)
@@ -831,8 +899,10 @@ class LoginGoogleTests(APITestCase):
         self.assertEqual(get_user_model().objects.count(), 1)
 
 
+# Verifica credenciais Google assinadas sem consultar serviços reais.
 @override_settings(**CONFIG_TESTES, GOOGLE_CLIENT_ID="cliente-google.apps.googleusercontent.com")
 class LoginGoogleTokensAssinadosTests(APITestCase):
+    # Gera uma chave e um certificado locais para assinar os tokens de teste.
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -844,6 +914,7 @@ class LoginGoogleTokensAssinadosTests(APITestCase):
             ).decode("ascii"),
         }
 
+    # Limpa os certificados e prepara os dados de identidade do token.
     def setUp(self):
         cache.clear()
         estado = patch("api.views.google._cache_certificados_google", None)
@@ -857,11 +928,13 @@ class LoginGoogleTokensAssinadosTests(APITestCase):
             "iat": agora - 60, "exp": agora + 3600,
         }
 
+    # Assina um token Google local com alterações opcionais nos dados.
     def token(self, alteracoes=None):
         return google_jwt.encode(
             self.assinador, {**self.claims, **(alteracoes or {})}
         ).decode("ascii")
 
+    # Envia o token ao login usando certificados simulados.
     def login(self, credential):
         resposta_certificados = SimpleNamespace(
             status=200, data=json.dumps(self.certificados).encode("utf-8"),
@@ -877,6 +950,7 @@ class LoginGoogleTokensAssinadosTests(APITestCase):
                 self.assertFalse(chamada.kwargs["allow_redirects"])
         return resposta
 
+    # Confere a rejeição de assinatura, público, emissor ou prazo inválidos.
     def test_assinatura_audience_issuer_e_expiracao_invalidas_sao_rejeitadas(self):
         cabecalho, corpo, assinatura = self.token().split(".")
         assinatura_invalida = ("A" if assinatura[0] != "A" else "B") + assinatura[1:]
@@ -894,6 +968,7 @@ class LoginGoogleTokensAssinadosTests(APITestCase):
                 self.assertFalse(ContaGoogle.objects.exists())
                 self.assertFalse(Token.objects.exists())
 
+    # Confere que o cache não substitui a validação criptográfica do token.
     def test_cache_de_certificados_nao_dispensa_validacao_criptografica(self):
         certificados = SimpleNamespace(
             status=200, data=json.dumps(self.certificados).encode("utf-8"),
@@ -931,8 +1006,10 @@ class LoginGoogleTokensAssinadosTests(APITestCase):
         self.assertEqual(Token.objects.count(), 1)
 
 
+# Verifica a validade e a renovação do cache de certificados Google.
 @override_settings(**CONFIG_TESTES, GOOGLE_CLIENT_ID="cliente-google.apps.googleusercontent.com")
 class CertificadosGoogleTests(APITestCase):
+    # Gera os certificados locais usados nos cenários de cache.
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -942,6 +1019,7 @@ class CertificadosGoogleTests(APITestCase):
             serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo,
         ).decode("ascii")}
 
+    # Isola cache, trava, transporte e relógios dos certificados Google.
     def setUp(self):
         cache.clear()
         self.agora = 1700000000
@@ -967,10 +1045,12 @@ class CertificadosGoogleTests(APITestCase):
         calendario.start()
         self.addCleanup(calendario.stop)
 
+    # Consulta o carregador de certificados com URL e método configuráveis.
     def requisitar(self, url="https://www.googleapis.com/oauth2/v1/certs", method="GET"):
         from .views.google import _requisitar_certificados_google
         return _requisitar_certificados_google(url, method=method)
 
+    # Monta e envia uma credencial assinada para exercitar o login completo.
     def login_real(self):
         agora = int(time())
         credential = google_jwt.encode(self.assinador, {
@@ -980,6 +1060,7 @@ class CertificadosGoogleTests(APITestCase):
         }).decode("ascii")
         return self.client.post("/login/google/", {"credential": credential}, format="json")
 
+    # Confere o prazo do cache a partir dos cabeçalhos e da duração da consulta.
     def test_validade_respeita_max_age_age_date_expires_e_duracao_da_consulta(self):
         from .views.google import _validade_cache_google
 
@@ -1002,6 +1083,7 @@ class CertificadosGoogleTests(APITestCase):
                     _validade_cache_google(headers, agora=self.agora, duracao=2), esperado,
                 )
 
+    # Confere que cabeçalhos sem validade explícita impedem guardar o cache.
     def test_cabecalhos_sem_validade_ou_invalidos_nao_autorizam_cache(self):
         from .views.google import _validade_cache_google
 
@@ -1019,6 +1101,7 @@ class CertificadosGoogleTests(APITestCase):
             with self.subTest(headers=headers):
                 self.assertEqual(_validade_cache_google(headers, agora=self.agora, duracao=2), 0)
 
+    # Confere o reaproveitamento do cache e sua renovação no vencimento exato.
     def test_cache_hit_nao_consulta_rede_e_vencimento_exato_atualiza(self):
         primeira = self.requisitar()
         self.assertEqual(json.loads(primeira.data), self.certificados)
@@ -1032,6 +1115,7 @@ class CertificadosGoogleTests(APITestCase):
         self.assertEqual(self.requisitar().status, 200)
         self.assertEqual(self.transporte.return_value.call_count, 2)
 
+    # Confere o uso do cache válido enquanto a trava está ocupada.
     def test_cache_valido_continua_disponivel_com_trava_ocupada(self):
         from .views import google
 
@@ -1040,6 +1124,7 @@ class CertificadosGoogleTests(APITestCase):
             self.assertEqual(self.requisitar().data, primeira.data)
         self.assertEqual(self.transporte.return_value.call_count, 1)
 
+    # Confere uma nova consulta quando não há prazo explícito para o cache.
     def test_sem_cache_explicito_cada_chamada_reconsulta_google(self):
         for headers in ({}, {"Cache-Control": "no-store, max-age=600"},
                         {"Cache-Control": "no-cache, max-age=600"}):
@@ -1050,6 +1135,7 @@ class CertificadosGoogleTests(APITestCase):
                 self.requisitar()
                 self.assertEqual(self.transporte.return_value.call_count, 2)
 
+    # Confere a rejeição de URL ou método diferentes do endpoint autorizado.
     def test_url_ou_metodo_alternativo_nao_contornam_endpoint_fixo_nem_cache(self):
         self.requisitar()
         for url, metodo in (
@@ -1061,6 +1147,7 @@ class CertificadosGoogleTests(APITestCase):
                 self.requisitar(url, metodo)
         self.assertEqual(self.transporte.return_value.call_count, 1)
 
+    # Confere erros controlados para transporte e certificados inválidos.
     def test_falhas_de_transporte_e_respostas_invalidas_retornam_503_sem_contas(self):
         corpos = (
             (500, self.resposta.data), (302, self.resposta.data), (200, b"nao-json"),
@@ -1087,6 +1174,7 @@ class CertificadosGoogleTests(APITestCase):
         self.assertEqual(self.login_real().status_code, 200)
         self.assertEqual(self.transporte.return_value.call_count, 2)
 
+    # Confere a rejeição do cache vencido e a recuperação após falha do Google.
     def test_cache_vencido_nao_e_usado_quando_google_falha_e_novo_login_recupera(self):
         self.assertEqual(self.login_real().status_code, 200)
         self.transporte.return_value.side_effect = TransportError("detalhe interno")
@@ -1102,10 +1190,12 @@ class CertificadosGoogleTests(APITestCase):
         self.assertEqual(ContaGoogle.objects.count(), 1)
         self.assertEqual(Token.objects.count(), 1)
 
+    # Confere uma única renovação concorrente sem deixar outras consultas esperando.
     def test_refresh_concorrente_faz_uma_consulta_e_rejeita_excesso_sem_esperar(self):
         iniciou = Event()
         liberar = Event()
 
+        # Mantém a consulta simulada ocupada até o cenário liberar sua conclusão.
         def consultar(*args, **kwargs):
             iniciou.set()
             if not liberar.wait(timeout=5):
@@ -1127,6 +1217,7 @@ class CertificadosGoogleTests(APITestCase):
         self.assertEqual(self.requisitar().status, 200)
         self.assertEqual(self.transporte.return_value.call_count, 1)
 
+    # Confere a recuperação do login após liberar a trava dos certificados.
     def test_refresh_ocupado_retorna_503_sem_conta_e_recupera_apos_liberar(self):
         from .views import google
 
@@ -1140,12 +1231,15 @@ class CertificadosGoogleTests(APITestCase):
         self.assertEqual(self.login_real().status_code, 200)
 
 
+# Verifica a criação da conta Google por logins simultâneos.
 @override_settings(**CONFIG_TESTES, GOOGLE_CLIENT_ID="cliente-google.apps.googleusercontent.com")
 class LoginGoogleConcorrenciaTests(TransactionTestCase):
+    # Limpa o cache e prepara o cliente para o cenário concorrente.
     def setUp(self):
         cache.clear()
         self.client = APIClient()
 
+    # Confere que logins simultâneos não duplicam usuário ou vínculo Google.
     def test_mesmo_sub_em_conexoes_distintas_nao_duplica_usuario_nem_vinculo(self):
         barreira = Barrier(2)
         claims = {
@@ -1153,10 +1247,12 @@ class LoginGoogleConcorrenciaTests(TransactionTestCase):
             "email_verified": True,
         }
 
+        # Sincroniza a validação das duas credenciais Google simuladas.
         def verificar(*args, **kwargs):
             barreira.wait(timeout=5)
             return claims.copy()
 
+        # Envia um login Google com conexão de banco própria e fecha a conexão.
         def enviar():
             close_old_connections()
             try:
@@ -1193,8 +1289,10 @@ class LoginGoogleConcorrenciaTests(TransactionTestCase):
                 self.assertEqual(dados["usuario"]["id"], conta.usuario_id)
 
 
+# Verifica a renovação concorrente de tokens pelos dois tipos de login.
 @override_settings(**CONFIG_TESTES, GOOGLE_CLIENT_ID="cliente-google.apps.googleusercontent.com")
 class TokenExpiracaoConcorrenciaTests(TransactionTestCase):
+    # Prepara uma conta vinculada ao Google com token já vencido.
     def setUp(self):
         cache.clear()
         self.password = "SenhaForte!93q8z7"
@@ -1207,15 +1305,18 @@ class TokenExpiracaoConcorrenciaTests(TransactionTestCase):
             created=timezone.now() - timedelta(days=2)
         )
 
+    # Confere que logins simultâneos compartilham uma única renovação de token.
     def test_logins_senha_e_google_concorrentes_compartilham_uma_unica_renovacao(self):
         from .authentication import obter_token_acesso
 
         barreira = Barrier(2)
 
+        # Sincroniza as solicitações antes de obter o token de acesso.
         def obter_sincronizado(usuario):
             barreira.wait(timeout=5)
             return obter_token_acesso(usuario)
 
+        # Envia um login local ou Google usando uma conexão de banco própria.
         def enviar(tipo):
             close_old_connections()
             try:
@@ -1270,7 +1371,9 @@ class TokenExpiracaoConcorrenciaTests(TransactionTestCase):
         self.assertEqual(cliente.get("/chat/").status_code, 200)
 
 
+# Reúne os usuários, tokens e auxiliares compartilhados pelos testes do chat.
 class DadosChatMixin:
+    # Cria visitantes, operadores, tokens e conversas para cada cenário.
     def preparar_dados(self):
         cache.clear()
         usuarios = get_user_model()
@@ -1290,9 +1393,11 @@ class DadosChatMixin:
         self.client = APIClient()
         self.autorizar(self.token)
 
+    # Define o token usado nas próximas requisições do cliente.
     def autorizar(self, token):
         self.client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
 
+    # Envia uma mensagem HTTP com conversa e conteúdo configuráveis.
     def enviar_http(self, conversa=None, conteudo="Olá!", id_cliente=None, **extras):
         conversa = conversa or self.conversa
         return self.client.post(
@@ -1301,6 +1406,7 @@ class DadosChatMixin:
             format="json",
         )
 
+    # Envia o marcador de leitura de uma conversa pela API HTTP.
     def leitura_http(self, conversa, mensagem_id):
         return self.client.post(
             f"/chat/conversas/{conversa.pk}/leitura/",
@@ -1308,11 +1414,14 @@ class DadosChatMixin:
         )
 
 
+# Verifica o vencimento de tokens em requisições HTTP do chat.
 @override_settings(**CONFIG_TESTES)
 class TokenExpiracaoHTTPTests(DadosChatMixin, APITestCase):
+    # Prepara os dados compartilhados do chat para cada cenário de expiração.
     def setUp(self):
         self.preparar_dados()
 
+    # Confere o vencimento configurável sem prolongar a validade do token.
     def test_validade_configuravel_rejeita_no_limite_exato_sem_prorrogar(self):
         criado = self.token.created
         for ttl in (60, 3600):
@@ -1331,6 +1440,7 @@ class TokenExpiracaoHTTPTests(DadosChatMixin, APITestCase):
                 self.token.refresh_from_db()
                 self.assertEqual(self.token.created, criado)
 
+    # Confere que o token vencido não permite leitura, escrita ou logout.
     def test_token_vencido_nao_le_escreve_faz_logout_ou_cria_sessao(self):
         vencimento = self.token.created + timedelta(hours=1)
         requisicoes = (
@@ -1356,6 +1466,7 @@ class TokenExpiracaoHTTPTests(DadosChatMixin, APITestCase):
         self.assertEqual(Conversa.objects.filter(usuario=self.usuario).count(), 2)
         self.assertTrue(Token.objects.filter(key=self.token.key).exists())
 
+    # Confere a renovação por senha e o acesso com o novo token.
     def test_login_senha_renova_no_limite_e_novo_token_autentica(self):
         vencimento = self.token.created + timedelta(hours=1)
         self.client.credentials()
@@ -1376,6 +1487,7 @@ class TokenExpiracaoHTTPTests(DadosChatMixin, APITestCase):
         self.assertEqual(self.client.get("/chat/").status_code, 200)
         self.assertNotIn("sessionid", resposta.cookies)
 
+    # Confere respostas controladas para falhas de banco na autenticação.
     def test_falha_de_banco_na_autenticacao_e_emissao_e_recuperavel(self):
         with patch.object(Token.objects, "select_related", side_effect=OperationalError("detalhe interno")):
             resposta = self.client.get("/chat/")
@@ -1390,6 +1502,7 @@ class TokenExpiracaoHTTPTests(DadosChatMixin, APITestCase):
         self.assertEqual(resposta.status_code, 503)
         self.assertNotIn("detalhe interno", str(resposta.json()))
 
+    # Confere a releitura do token renovado por uma tentativa concorrente.
     def test_perdedor_da_renovacao_rele_token_ja_emitido_pelo_outro_login(self):
         from django.db.models.query import QuerySet
         from .authentication import obter_token_acesso
@@ -1398,6 +1511,7 @@ class TokenExpiracaoHTTPTests(DadosChatMixin, APITestCase):
         atualizar = QuerySet.update
         criado = timezone.now()
 
+        # Simula outra tentativa vencendo a renovação antes da atualização atual.
         def simular_vencedor(consulta, **valores):
             atualizar(consulta, key="f" * 40, created=criado)
             return 0
@@ -1411,11 +1525,14 @@ class TokenExpiracaoHTTPTests(DadosChatMixin, APITestCase):
         self.assertFalse(Token.objects.filter(key=self.token.key).exists())
 
 
+# Verifica acesso, histórico, leitura e integridade do chat HTTP.
 @override_settings(**CONFIG_TESTES)
 class ChatHTTPTests(DadosChatMixin, APITestCase):
+    # Prepara os dados compartilhados para cada cenário do chat HTTP.
     def setUp(self):
         self.preparar_dados()
 
+    # Confere o envio de quatro mil caracteres Unicode escapados no JSON.
     def test_limite_bruto_preserva_4000_caracteres_unicode_escapados_no_json(self):
         conteudo = "\U0001f600" * 4000
         corpo = json.dumps({
@@ -1429,6 +1546,7 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
         self.assertEqual(resposta.json()["conteudo"], conteudo)
         self.assertEqual(Mensagem.objects.get().conteudo, conteudo)
 
+    # Confere a autenticação e o papel de atendimento sem depender do nome.
     def test_chat_exige_token_e_identifica_papel_sem_depender_do_nome(self):
         self.client.credentials()
         self.assertEqual(self.client.get("/chat/").status_code, 401)
@@ -1441,6 +1559,7 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
             self.autorizar(token)
             self.assertTrue(self.client.get("/chat/").json()["operador"])
 
+    # Confere uma única conversa por usuário e destinatário.
     def test_duas_conversas_por_usuario_sem_duplicacao(self):
         for destinatario, conversa in (("henrique", self.conversa), ("assistente", self.assistente)):
             resposta = self.client.post("/chat/conversas/", {"destinatario": destinatario}, format="json")
@@ -1451,15 +1570,18 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
         self.assertEqual(resposta.status_code, 201)
         self.assertEqual(Conversa.objects.filter(usuario=self.outro).count(), 2)
 
+    # Confere a rejeição de destinatário inválido ou identidade forjada.
     def test_conversa_rejeita_destinatario_invalido_e_usuario_forjado(self):
         for dados in ({"destinatario": "visitante_b"}, {"destinatario": "henrique", "usuario": self.outro.pk}, []):
             with self.subTest(dados=dados):
                 self.assertEqual(self.client.post("/chat/conversas/", dados, format="json").status_code, 400)
 
+    # Confere que superusuários atendem apenas conversas já recebidas.
     def test_superusuarios_atendem_conversas_recebidas(self):
         self.autorizar(self.token_operador)
         self.assertEqual(self.client.post("/chat/conversas/", {"destinatario": "henrique"}, format="json").status_code, 403)
 
+    # Confere a privacidade dos visitantes e a caixa compartilhada dos operadores.
     def test_listagem_privada_e_caixa_compartilhada_dos_superusuarios(self):
         resposta = self.client.get("/chat/conversas/").json()
         self.assertEqual(resposta["count"], 2)
@@ -1471,6 +1593,7 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
             self.assertEqual(filtrada["count"], 1)
         self.assertEqual(self.client.get("/chat/conversas/?destinatario=invalido").status_code, 400)
 
+    # Confere a preservação dos filtros e do tamanho na paginação de conversas.
     def test_paginacao_de_conversas_preserva_tamanho_e_filtro_nos_links(self):
         usuarios = get_user_model().objects.bulk_create([
             get_user_model()(username=f"paginacao_{indice}") for indice in range(21)
@@ -1500,6 +1623,7 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
             )
         )
 
+    # Confere a autenticação e a privacidade nas requisições HEAD.
     def test_head_preserva_autenticacao_e_acesso_as_conversas(self):
         caminhos = (
             "/chat/conversas/", f"/chat/conversas/{self.conversa.pk}/",
@@ -1520,6 +1644,7 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
             with self.subTest(sem_token=caminho):
                 self.assertEqual(self.client.head(caminho).status_code, 401)
 
+    # Confere que o atributo staff não permite acessar conversa alheia.
     def test_staff_sem_superuser_nao_acessa_conversa_alheia(self):
         self.usuario.is_staff = True
         self.usuario.save(update_fields=("is_staff",))
@@ -1530,12 +1655,14 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
         self.assertEqual(self.leitura_http(self.conversa_outro, 1).status_code, 404)
         self.assertFalse(Mensagem.objects.exists())
 
+    # Confere que o nome Henrique não concede permissão de atendimento.
     def test_nome_henrique_nao_concede_papel_de_atendimento(self):
         self.usuario.username = "Henrique"
         self.usuario.save(update_fields=("username",))
         self.assertFalse(self.client.get("/chat/").json()["operador"])
         self.assertEqual(self.enviar_http(self.conversa_outro).status_code, 404)
 
+    # Confere que o cadastro público não aceita privilégios pelo payload.
     def test_cadastro_publico_nao_concede_superuser_pelo_payload(self):
         resposta = self.client.post("/usuarios/", {
             "username": "tentativa_admin", "password": "SenhaForte!93q8z7",
@@ -1546,6 +1673,7 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
         self.assertFalse(usuario.is_superuser)
         self.assertFalse(usuario.is_staff)
 
+    # Confere o envio e a recuperação do histórico dos dois destinatários.
     def test_enviar_e_recuperar_historico_dos_dois_destinatarios(self):
         for conversa in (self.conversa, self.assistente):
             resposta = self.enviar_http(conversa, "  Olá, tudo bem?  ")
@@ -1556,6 +1684,7 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
             self.assertEqual(len(historico["results"]), 1)
         self.assertEqual(Mensagem.objects.count(), 2)
 
+    # Confere a identidade pública Henrique nas respostas dos superusuários.
     def test_resposta_de_qualquer_superuser_aparece_sempre_como_henrique(self):
         for token in (self.token_operador, self.token_operador2):
             self.autorizar(token)
@@ -1567,23 +1696,27 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
                 self.assertNotIn(token.user.username, str(resposta.json()))
                 self.assertEqual(Mensagem.objects.get(pk=resposta.json()["id"]).remetente_id, token.user_id)
 
+    # Confere a rejeição de remetente ou origem forjados pelo visitante.
     def test_usuario_nao_pode_forjar_autor_ou_origem(self):
         for campo, valor in (("origem", "henrique"), ("remetente", self.operador.pk), ("conversa_id", str(self.assistente.pk))):
             with self.subTest(campo=campo):
                 self.assertEqual(self.enviar_http(**{campo: valor}).status_code, 400)
         self.assertFalse(Mensagem.objects.exists())
 
+    # Confere que mensagens inválidas não são persistidas.
     def test_mensagens_invalidas_nao_sao_salvas(self):
         for conteudo in ("", " \n\t ", "a" * 4001, None, 123, True, [], {}):
             with self.subTest(conteudo=str(conteudo)[:20]):
                 self.assertEqual(self.enviar_http(conteudo=conteudo).status_code, 400)
         self.assertFalse(Mensagem.objects.exists())
 
+    # Confere a exigência de um identificador de cliente no formato UUID.
     def test_id_cliente_obrigatorio_e_uuid_valido(self):
         url = f"/chat/conversas/{self.conversa.pk}/mensagens/"
         for dados in ({"conteudo": "Olá"}, {"conteudo": "Olá", "id_cliente": "invalido"}):
             self.assertEqual(self.client.post(url, dados, format="json").status_code, 400)
 
+    # Confere o reenvio sem duplicação e a rejeição de conteúdo conflitante.
     def test_reenvio_retorna_mesma_mensagem_e_conflito_nao_altera_historico(self):
         chave = uuid.uuid4()
         primeira = self.enviar_http(id_cliente=chave)
@@ -1594,6 +1727,7 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
         self.assertEqual(self.enviar_http(id_cliente=chave, conteudo="Outro texto").status_code, 409)
         self.assertEqual(Mensagem.objects.count(), 1)
 
+    # Confere o isolamento do identificador de cliente por conversa e origem.
     def test_id_cliente_isolado_por_conversa_e_origem(self):
         chave = uuid.uuid4()
         self.assertEqual(self.enviar_http(id_cliente=chave).status_code, 201)
@@ -1601,6 +1735,7 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
         self.autorizar(self.token_operador)
         self.assertEqual(self.enviar_http(id_cliente=chave).status_code, 201)
 
+    # Confere o limite compartilhado de mensagens e a segurança do reenvio.
     def test_limite_de_mensagem_compartilhado_entre_conversas_e_reenvio_seguro(self):
         with patch.object(UserRateThrottle, "get_rate", return_value="2/min"):
             chave = uuid.uuid4()
@@ -1611,6 +1746,7 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
             self.assertGreater(int(limitada["Retry-After"]), 0)
             self.assertEqual(self.enviar_http(id_cliente=chave).status_code, 200)
 
+    # Confere a paginação e a recuperação das mensagens após reconectar.
     def test_historico_paginado_e_recuperacao_apos_reconectar(self):
         mensagens = Mensagem.objects.bulk_create([
             Mensagem(conversa=self.conversa, remetente=self.usuario, origem="usuario", conteudo=f"Mensagem {i}", id_cliente=uuid.uuid4())
@@ -1629,6 +1765,7 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
         self.assertEqual(self.client.get(url, {"apos_id": "invalido"}).status_code, 400)
         self.assertEqual(self.client.get(url, {"cursor": "invalido"}).status_code, 404)
 
+    # Confere a rejeição de um cursor adulterado sem erro interno.
     def test_cursor_com_posicao_adulterada_nao_causa_erro_interno(self):
         url = f"/chat/conversas/{self.conversa.pk}/mensagens/"
         for posicao in ("invalido", "1.1", "-1", "0", "9223372036854775808", "9" * 5000):
@@ -1637,6 +1774,7 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
                 resposta = self.client.get(url, {"cursor": cursor})
                 self.assertEqual(resposta.status_code, 404)
 
+    # Confere os contadores e os marcadores de leitura compartilhados.
     def test_nao_lidas_marcadores_monotonicos_e_leitura_compartilhada(self):
         primeira = self.enviar_http().json()["id"]
         segunda = self.enviar_http(conteudo="Segunda").json()["id"]
@@ -1653,12 +1791,14 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
         self.assertEqual(self.leitura_http(self.conversa, resposta).status_code, 200)
         self.assertEqual(self.client.get(url).json()["nao_lidas"], 0)
 
+    # Confere a rejeição de leitura referente a outra conversa.
     def test_leitura_rejeita_mensagem_de_outra_conversa(self):
         mensagem = self.enviar_http(self.assistente).json()["id"]
         self.assertEqual(self.leitura_http(self.conversa, mensagem).status_code, 404)
         self.conversa.refresh_from_db()
         self.assertEqual(self.conversa.ultima_lida_usuario, 0)
 
+    # Confere a gravação interna de respostas sem expor personificação na API.
     def test_estrutura_interna_para_futura_ia_sem_endpoint_de_personificacao(self):
         mensagem, criada = registrar_resposta_assistente(
             self.assistente.pk, {"conteudo": "Resposta futura", "id_cliente": str(uuid.uuid4())}
@@ -1671,11 +1811,13 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
         with self.assertRaises(Http404):
             registrar_resposta_assistente(self.conversa.pk, {"conteudo": "Não", "id_cliente": str(uuid.uuid4())})
 
+    # Confere a recusa de novos envios sem um superusuário ativo.
     def test_quando_nao_ha_superusuario_ativo_chat_nao_aceita_novos_envios(self):
         get_user_model().objects.filter(is_superuser=True).update(is_active=False)
         self.assertEqual(self.enviar_http().status_code, 503)
         self.assertFalse(Mensagem.objects.exists())
 
+    # Confere a rejeição de usuário inativo ou token revogado no chat.
     def test_usuario_inativo_e_token_revogado_nao_acessam_chat(self):
         self.usuario.is_active = False
         self.usuario.save(update_fields=("is_active",))
@@ -1686,6 +1828,7 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
         self.assertFalse(Token.objects.filter(pk=self.token.pk).exists())
         self.assertEqual(self.client.get("/chat/").status_code, 401)
 
+    # Confere a revogação no logout mesmo após esgotar a cota do chat.
     def test_logout_revoga_acesso_mesmo_com_cota_do_chat_esgotada(self):
         with patch("rest_framework.throttling.ScopedRateThrottle.get_rate", return_value="1/min"):
             self.assertEqual(self.client.get("/chat/").status_code, 200)
@@ -1693,6 +1836,7 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
             self.assertEqual(self.client.post("/logout/").status_code, 204)
         self.assertFalse(Token.objects.filter(pk=self.token.pk).exists())
 
+    # Confere que falhas na publicação não apagam uma mensagem confirmada.
     def test_falha_de_publicacao_nao_perde_mensagem_confirmada_no_banco(self):
         with patch("api.views.chat.get_channel_layer") as camada:
             camada.return_value.group_send = AsyncMock(side_effect=ConnectionError())
@@ -1702,6 +1846,7 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
         self.assertEqual(resposta.status_code, 201)
         self.assertEqual(Mensagem.objects.count(), 1)
 
+    # Confere respostas recuperáveis para falhas de banco no chat.
     def test_falha_de_banco_vira_erro_recuperavel_sem_detalhes_internos(self):
         from django.db import OperationalError
         with patch("api.views.chat.enviar_mensagem", side_effect=OperationalError("detalhe interno")):
@@ -1709,6 +1854,7 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
         self.assertEqual(resposta.status_code, 503)
         self.assertNotIn("detalhe interno", str(resposta.json()))
 
+    # Confere a publicação aos demais grupos quando um deles falha.
     def test_falha_em_um_grupo_nao_interrompe_publicacao_aos_demais(self):
         with patch("api.views.chat.get_channel_layer") as camada:
             camada.return_value.group_send = AsyncMock(side_effect=[ConnectionError(), None, None])
@@ -1716,6 +1862,7 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
                 publicar_evento((self.usuario.pk, self.operador.pk, self.operador2.pk), {"type": "teste"})
             self.assertEqual(camada.return_value.group_send.await_count, 3)
 
+    # Confere as restrições de conversa e identidade aplicadas pelo banco.
     def test_integridade_da_conversa_e_da_identidade_no_banco(self):
         with self.assertRaises(IntegrityError), transaction.atomic():
             Conversa.objects.create(usuario=self.usuario, destinatario="henrique")
@@ -1724,6 +1871,7 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
         with self.assertRaises(IntegrityError), transaction.atomic():
             Mensagem.objects.create(conversa=self.conversa, origem="henrique", conteudo="Falso", id_cliente=uuid.uuid4())
 
+    # Confere que a API não expõe edição ou exclusão de mensagens.
     def test_metodos_de_edicao_e_exclusao_nao_expostos(self):
         for caminho in (
             "/chat/conversas/", f"/chat/conversas/{self.conversa.pk}/",
@@ -1735,12 +1883,14 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
                     self.assertEqual(resposta.status_code, 405)
 
 
+# Verifica a integração do assistente com o chat HTTP.
 @override_settings(**{
     **CONFIG_TESTES,
     "GEMINI_API_KEY": "chave-teste",
     "GEMINI_MODEL": "gemini-3.5-flash-lite",
 })
 class ChatAssistenteHTTPTests(DadosChatMixin, APITestCase):
+    # Prepara o chat e uma geração de texto simulada para cada cenário.
     def setUp(self):
         self.preparar_dados()
         geracao = patch(
@@ -1749,10 +1899,12 @@ class ChatAssistenteHTTPTests(DadosChatMixin, APITestCase):
         self.geracao = geracao.start()
         self.addCleanup(geracao.stop)
 
+    # Confere a indicação de assistente ativo sem disparar geração de texto.
     def test_perfil_informa_assistente_ativo(self):
         self.assertTrue(self.client.get("/chat/").json()["assistente_ia_ativo"])
         self.geracao.assert_not_called()
 
+    # Confere a gravação do par e dos eventos preservando o retorno HTTP.
     def test_pergunta_e_resposta_sao_salvas_e_publicadas_sem_alterar_retorno_http(self):
         chave = uuid.uuid4()
         with patch("api.views.chat.publicar_evento") as publicar:
@@ -1782,6 +1934,7 @@ class ChatAssistenteHTTPTests(DadosChatMixin, APITestCase):
         )
         self.assertEqual(eventos[1]["mensagem"]["remetente"], {"id": None, "nome": "Assistente"})
 
+    # Confere que o histórico enviado à IA contém apenas a conversa atual.
     def test_historico_da_ia_fica_restrito_a_conversa_atual(self):
         Mensagem.objects.create(
             conversa=self.assistente, remetente=self.usuario, origem="usuario",
@@ -1803,6 +1956,7 @@ class ChatAssistenteHTTPTests(DadosChatMixin, APITestCase):
             {"role": "user", "parts": [{"text": "Quais tecnologias utiliza?"}]},
         ])
 
+    # Confere que o chat com Henrique e respostas manuais não acionam a IA.
     def test_caixa_henrique_e_respostas_do_operador_nao_disparam_ia(self):
         self.assertEqual(self.enviar_http(self.conversa).status_code, 201)
         self.autorizar(self.token_operador)
@@ -1812,6 +1966,7 @@ class ChatAssistenteHTTPTests(DadosChatMixin, APITestCase):
         self.geracao.assert_not_called()
         self.assertEqual(Mensagem.objects.count(), 2)
 
+    # Confere que entradas inválidas ou conversas alheias não acionam a IA.
     def test_entrada_invalida_e_conversa_alheia_nao_disparam_ia(self):
         for conteudo in ("", " ", None, 123, "a" * 4001):
             with self.subTest(conteudo=str(conteudo)[:20]):
@@ -1825,6 +1980,7 @@ class ChatAssistenteHTTPTests(DadosChatMixin, APITestCase):
         self.geracao.assert_not_called()
         self.assertFalse(Mensagem.objects.exists())
 
+    # Confere o reenvio sem regeneração e a preservação do par original.
     def test_reenvio_nao_gera_resposta_nova_e_conflito_preserva_par_original(self):
         chave = uuid.uuid4()
         with patch("api.views.chat.publicar_evento") as publicar:
@@ -1841,6 +1997,7 @@ class ChatAssistenteHTTPTests(DadosChatMixin, APITestCase):
         self.geracao.assert_called_once()
         self.assertEqual(publicar.call_count, 2)
 
+    # Confere que uma falha da IA permite reenvio sem gravação parcial.
     def test_falha_da_ia_nao_persiste_ou_publica_e_permite_reenvio(self):
         from .ia import AssistenteIndisponivel
 
@@ -1860,6 +2017,7 @@ class ChatAssistenteHTTPTests(DadosChatMixin, APITestCase):
         self.assertEqual(self.geracao.call_count, 2)
         self.assertEqual(publicar.call_count, 2)
 
+    # Confere a reversão da pergunta e dos eventos se a resposta não for salva.
     def test_falha_ao_salvar_resposta_reverte_pergunta_e_eventos(self):
         with patch("api.views.chat.publicar_evento") as publicar:
             with patch(
@@ -1875,14 +2033,18 @@ class ChatAssistenteHTTPTests(DadosChatMixin, APITestCase):
         self.geracao.assert_called_once()
 
 
+# Verifica a criação de conversas e mensagens sob acesso simultâneo.
 @override_settings(**CONFIG_TESTES)
 class ChatConcorrenciaTests(DadosChatMixin, TransactionTestCase):
+    # Prepara os dados do chat para cada cenário concorrente.
     def setUp(self):
         self.preparar_dados()
 
+    # Dispara duas requisições com conexões de banco independentes.
     def executar_em_paralelo(self, url, dados):
         barreira = Barrier(2)
 
+        # Sincroniza e envia uma requisição autenticada com conexão própria.
         def enviar():
             close_old_connections()
             cliente = APIClient()
@@ -1897,6 +2059,7 @@ class ChatConcorrenciaTests(DadosChatMixin, TransactionTestCase):
             tarefas = [executor.submit(enviar) for _ in range(2)]
             return [tarefa.result(timeout=10) for tarefa in tarefas]
 
+    # Confere a idempotência de envios simultâneos por HTTP.
     def test_envios_http_em_conexoes_distintas_preservam_idempotencia(self):
         url = f"/chat/conversas/{self.conversa.pk}/mensagens/"
         dados = {"conteudo": "Reenvio concorrente", "id_cliente": str(uuid.uuid4())}
@@ -1907,6 +2070,7 @@ class ChatConcorrenciaTests(DadosChatMixin, TransactionTestCase):
         self.assertEqual(Mensagem.objects.count(), 1)
         self.assertEqual(self.client.post(url, dados, format="json").status_code, 200)
 
+    # Confere que a criação simultânea não duplica conversas.
     def test_criacao_http_concorrente_nao_duplica_conversa(self):
         self.assistente.delete()
         dados = {"destinatario": "assistente"}
@@ -1915,18 +2079,21 @@ class ChatConcorrenciaTests(DadosChatMixin, TransactionTestCase):
         self.assertIn(self.client.post("/chat/conversas/", dados, format="json").status_code, (200, 201))
         self.assertEqual(Conversa.objects.filter(usuario=self.usuario, destinatario="assistente").count(), 1)
 
+    # Confere o bloqueio de gerações simultâneas e o reenvio sem regenerar.
     @override_settings(GEMINI_API_KEY="chave-teste")
     def test_geracao_em_andamento_impede_chamada_concorrente_e_reenvio_reutiliza_par(self):
         inicio, liberar = Event(), Event()
         dados = {"conteudo": "Quais projetos?", "id_cliente": str(uuid.uuid4())}
         url = f"/chat/conversas/{self.assistente.pk}/mensagens/"
 
+        # Mantém a geração simulada pendente até o cenário liberar sua resposta.
         def gerar(historico):
             inicio.set()
             if not liberar.wait(timeout=5):
                 raise RuntimeError("A segunda requisição não liberou o teste.")
             return "Henrique desenvolve projetos web."
 
+        # Envia a primeira mensagem enquanto a geração simulada está pendente.
         def enviar():
             close_old_connections()
             cliente = APIClient()
@@ -1955,16 +2122,20 @@ class ChatConcorrenciaTests(DadosChatMixin, TransactionTestCase):
         self.assertEqual(Mensagem.objects.count(), 4)
 
 
+# Verifica autenticação, eventos e privacidade nas conexões WebSocket.
 @override_settings(**CONFIG_TESTES)
 class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
+    # Prepara os dados compartilhados para cada cenário WebSocket.
     def setUp(self):
         self.preparar_dados()
 
+    # Abre conexões de teste e garante seu fechamento ao sair do contexto.
     @asynccontextmanager
     async def conexoes(self):
         from config.asgi import application
         abertas = []
 
+        # Conecta um WebSocket e confere a autenticação opcional com o token.
         async def conectar(token=None, origem=b"http://localhost:5173", caminho="/ws/chat/", aceita=True):
             headers = [(b"origin", origem)] if origem is not None else []
             socket = WebsocketCommunicator(application, caminho, headers=headers)
@@ -1986,6 +2157,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
             for socket in abertas:
                 await socket.disconnect()
 
+    # Confere a criação e a confirmação da mesma mensagem no WebSocket.
     async def confirmar_envio(self, socket):
         eventos = [await socket.receive_json_from(timeout=2) for _ in range(2)]
         por_tipo = {evento["type"]: evento for evento in eventos}
@@ -1993,6 +2165,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
         self.assertEqual(por_tipo["mensagem.criada"]["mensagem"]["id"], por_tipo["mensagem.confirmada"]["mensagem"]["id"])
         return por_tipo["mensagem.confirmada"]
 
+    # Confere a resposta da IA e o reenvio WebSocket sem duplicação.
     @override_settings(GEMINI_API_KEY="chave-teste")
     async def test_websocket_gera_resposta_e_reenvio_nao_duplica_ou_publica_de_novo(self):
         async with self.conexoes() as conectar:
@@ -2025,6 +2198,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
             self.assertTrue(await operador.receive_nothing(timeout=0.03))
             self.assertTrue(await outro.receive_nothing(timeout=0.03))
 
+    # Confere que uma falha da IA preserva o socket sem salvar mensagens.
     @override_settings(GEMINI_API_KEY="chave-teste")
     async def test_falha_da_ia_no_websocket_preserva_conexao_e_nao_salva_mensagens(self):
         from .ia import AssistenteIndisponivel
@@ -2045,12 +2219,14 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
             await socket.send_json_to({"type": "ping"})
             self.assertEqual((await socket.receive_json_from())["type"], "pong")
 
+    # Confere a rejeição de origem inválida, origem ausente e token na URL.
     async def test_origem_nao_autorizada_ou_ausente_e_token_na_url_sao_rejeitados(self):
         async with self.conexoes() as conectar:
             await conectar(origem=b"https://site-malicioso.example", aceita=False)
             await conectar(origem=None, aceita=False)
             await conectar(caminho=f"/ws/chat/?token={self.token.key}", aceita=False)
 
+    # Confere a proibição de enviar comandos antes da autenticação.
     async def test_nao_pode_enviar_antes_de_autenticar(self):
         async with self.conexoes() as conectar:
             socket = await conectar()
@@ -2059,6 +2235,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
             self.assertEqual((await socket.receive_output())["code"], 4401)
             self.assertEqual(await Mensagem.objects.acount(), 0)
 
+    # Confere a rejeição de token inválido e usuário inativo no WebSocket.
     async def test_token_invalido_e_usuario_inativo_sao_rejeitados(self):
         async with self.conexoes() as conectar:
             socket = await conectar()
@@ -2070,6 +2247,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
             await inativo.send_json_to({"type": "autenticar", "token": self.token.key})
             self.assertEqual((await inativo.receive_json_from())["status"], 401)
 
+    # Confere a rejeição de um token já vencido ao autenticar o socket.
     async def test_token_expirado_nao_autentica_websocket(self):
         await Token.objects.filter(key=self.token.key).aupdate(
             created=timezone.now() - timedelta(days=2)
@@ -2080,6 +2258,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
             self.assertEqual((await socket.receive_json_from())["status"], 401)
             self.assertEqual((await socket.receive_output())["code"], 4401)
 
+    # Confere o fechamento do socket ocioso no vencimento do token.
     @override_settings(AUTH_TOKEN_TTL_SECONDS=0.2)
     async def test_socket_ocioso_fecha_quando_token_expira(self):
         await Token.objects.filter(key=self.token.key).aupdate(created=timezone.now())
@@ -2087,6 +2266,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
             socket = await conectar(self.token)
             self.assertEqual((await socket.receive_output(timeout=1))["code"], 4401)
 
+    # Confere que ping ou outra conexão não prolongam a validade do token.
     @override_settings(AUTH_TOKEN_TTL_SECONDS=0.6)
     async def test_ping_e_segunda_conexao_nao_prorrogam_prazo_da_sessao(self):
         criado = timezone.now()
@@ -2102,6 +2282,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
             self.assertEqual((await segundo.receive_output(timeout=0.15))["code"], 4401)
             self.assertEqual((await Token.objects.aget(user=self.usuario)).created, criado)
 
+    # Confere o cancelamento da tarefa de expiração ao desconectar.
     @override_settings(AUTH_TOKEN_TTL_SECONDS=0.2)
     async def test_desconectar_cancela_task_de_expiracao_sem_envio_tardio(self):
         from .websocket import ChatConsumer
@@ -2109,6 +2290,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
         tarefas = []
         aguardar = ChatConsumer._aguardar_expiracao
 
+        # Registra a tarefa de expiração antes de aguardar seu encerramento.
         async def observar(consumer, vencimento):
             tarefas.append(asyncio.current_task())
             await aguardar(consumer, vencimento)
@@ -2125,6 +2307,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
                 await asyncio.sleep(0.25)
                 self.assertTrue(await socket.receive_nothing(timeout=0.01))
 
+    # Confere a rejeição após vencer e a reconexão com um novo login.
     async def test_sessao_vencida_revalida_comando_e_novo_login_permite_reconectar(self):
         async with self.conexoes() as conectar:
             socket = await conectar(self.token)
@@ -2146,6 +2329,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
             await novo_socket.send_json_to({"type": "ping"})
             self.assertEqual((await novo_socket.receive_json_from())["type"], "pong")
 
+    # Confere que uma sessão vencida não recebe eventos privados.
     async def test_sessao_vencida_nao_recebe_eventos_privados(self):
         async with self.conexoes() as conectar:
             socket = await conectar(self.token)
@@ -2162,8 +2346,10 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
             self.assertEqual((await socket.receive_output())["code"], 4401)
             self.assertTrue(await socket.receive_nothing(timeout=0.01))
 
+    # Confere que uma operação lenta não confirma mensagens após vencer a sessão.
     @override_settings(AUTH_TOKEN_TTL_SECONDS=0.2)
     async def test_operacao_lenta_nao_envia_confirmacao_apos_expiracao(self):
+        # Simula um envio demorado que terminaria depois do vencimento do token.
         async def demorar(*args):
             await asyncio.sleep(0.35)
             return {"type": "mensagem.confirmada", "mensagem": {"conteudo": "tardio"}}
@@ -2180,14 +2366,17 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
                 await asyncio.sleep(0.4)
                 self.assertTrue(await socket.receive_nothing(timeout=0.01))
 
+    # Confere o encerramento da conexão que não se autentica no prazo.
     @override_settings(CHAT_WEBSOCKET_AUTH_TIMEOUT=0.02)
     async def test_conexao_sem_autenticacao_expira(self):
         async with self.conexoes() as conectar:
             socket = await conectar()
             self.assertEqual((await socket.receive_output(timeout=1))["code"], 4401)
 
+    # Confere que uma autenticação lenta não reabre uma conexão já vencida.
     @override_settings(CHAT_WEBSOCKET_AUTH_TIMEOUT=0.02)
     async def test_autenticacao_lenta_nao_reabre_conexao_apos_expirar_prazo(self):
+        # Simula uma validação de token que ultrapassa o prazo de autenticação.
         async def demorar(token):
             await asyncio.sleep(0.08)
             return self.token
@@ -2200,6 +2389,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
                 await asyncio.sleep(0.1)
                 self.assertTrue(await socket.receive_nothing(timeout=0.01))
 
+    # Confere a entrega aos operadores sem expor mensagens a outro visitante.
     async def test_envio_entrega_a_todos_superusuarios_sem_vazar_para_outro_visitante(self):
         async with self.conexoes() as conectar:
             usuario = await conectar(self.token)
@@ -2219,6 +2409,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
             self.assertTrue(await outro.receive_nothing(timeout=0.03))
             self.assertEqual(await Mensagem.objects.acount(), 1)
 
+    # Confere a identidade pública dos operadores nos dois tipos de conversa.
     async def test_respostas_de_superusuarios_tem_nome_publico_henrique_nas_duas_caixas(self):
         async with self.conexoes() as conectar:
             usuario = await conectar(self.token)
@@ -2233,6 +2424,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
                 self.assertEqual(evento["mensagem"]["remetente"], {"id": None, "nome": "Henrique"})
                 self.assertNotIn(self.operador2.username, str(evento))
 
+    # Confere a troca de mensagens entre clientes HTTP e WebSocket.
     async def test_http_publica_mensagem_no_websocket_e_socket_persiste_para_http(self):
         async with self.conexoes() as conectar:
             usuario = await conectar(self.token)
@@ -2250,6 +2442,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
             historico = await database_sync_to_async(self.client.get)(f"/chat/conversas/{self.conversa.pk}/mensagens/")
             self.assertEqual(len(historico.json()["results"]), 2)
 
+    # Confere os avisos de conversa nova ao visitante e aos operadores.
     async def test_conversa_nova_e_notificada_ao_visitante_e_aos_operadores(self):
         async with self.conexoes() as conectar:
             outro = await conectar(self.token_outro)
@@ -2264,6 +2457,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
                 self.assertEqual(evento["type"], "conversa.criada")
                 self.assertEqual(evento["conversa_id"], resposta.json()["id"])
 
+    # Confere a proibição de leitura e envio em conversas alheias pelo socket.
     async def test_socket_nao_le_ou_envia_em_conversa_alheia(self):
         async with self.conexoes() as conectar:
             socket = await conectar(self.token)
@@ -2275,6 +2469,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
                 self.assertEqual((await socket.receive_json_from())["status"], 404)
             self.assertEqual(await Mensagem.objects.acount(), 0)
 
+    # Confere a privacidade mesmo quando um evento chega ao grupo errado.
     async def test_evento_no_grupo_errado_nao_expoe_conversa_alheia(self):
         async with self.conexoes() as conectar:
             socket = await conectar(self.token)
@@ -2288,6 +2483,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
             await socket.send_json_to({"type": "ping"})
             self.assertEqual((await socket.receive_json_from())["type"], "pong")
 
+    # Confere o reenvio WebSocket sem duplicar mensagens ou eventos.
     async def test_reenvio_websocket_nao_duplica_nem_publica_de_novo(self):
         async with self.conexoes() as conectar:
             socket = await conectar(self.token)
@@ -2309,6 +2505,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
             self.assertEqual(erro["conversa_id"], dados["conversa_id"])
             self.assertEqual(await Mensagem.objects.acount(), 1)
 
+    # Confere a idempotência entre envios simultâneos de dois sockets.
     async def test_envios_simultaneos_de_duas_conexoes_nao_duplicam_mensagem(self):
         async with self.conexoes() as conectar:
             primeiro = await conectar(self.token)
@@ -2325,7 +2522,9 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
             self.assertEqual(sorted(r["repetida"] for r in respostas), [False, True])
             self.assertEqual(await Mensagem.objects.acount(), 1)
 
+    # Confere que uma transação revertida não grava mensagens nem publica eventos.
     async def test_transacao_revertida_nao_salva_ou_publica_mensagem(self):
+        # Grava uma mensagem e marca sua transação para reversão.
         @database_sync_to_async
         def reverter():
             with transaction.atomic():
@@ -2342,6 +2541,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
             self.assertTrue(await usuario.receive_nothing(timeout=0.03))
             self.assertTrue(await operador.receive_nothing(timeout=0.03))
 
+    # Confere a rejeição de autor forjado e mensagens inválidas pelo socket.
     async def test_autor_forjado_e_payloads_invalidos_nao_salvam_mensagens(self):
         async with self.conexoes() as conectar:
             socket = await conectar(self.token)
@@ -2357,6 +2557,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
                 self.assertEqual((await socket.receive_json_from())["status"], 400)
             self.assertEqual(await Mensagem.objects.acount(), 0)
 
+    # Confere que JSON inválido não encerra um socket autenticado.
     async def test_json_invalido_nao_derruba_socket_autenticado(self):
         async with self.conexoes() as conectar:
             socket = await conectar(self.token)
@@ -2365,6 +2566,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
             await socket.send_json_to({"type": "ping"})
             self.assertEqual((await socket.receive_json_from())["type"], "pong")
 
+    # Confere o encerramento por conteúdo binário ou tamanho excessivo.
     async def test_payload_excessivo_e_binario_encerram_conexao(self):
         async with self.conexoes() as conectar:
             grande = await conectar(self.token)
@@ -2374,6 +2576,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
             await binario.send_to(bytes_data=b"nao suportado")
             self.assertEqual((await binario.receive_output())["code"], 1003)
 
+    # Confere os limites de abertura de conexões e de eventos recebidos.
     async def test_excesso_de_conexoes_e_frames_encerra_acesso(self):
         with patch("api.websocket.AnonRateThrottle.get_rate", return_value="1/min"):
             async with self.conexoes() as conectar:
@@ -2385,6 +2588,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
                 await socket.send_json_to({"type": "ping"})
                 self.assertEqual((await socket.receive_output())["code"], 4429)
 
+    # Confere o encerramento seguro quando o transporte de autenticação falha.
     async def test_falha_de_transporte_durante_autenticacao_encerra_sem_expor_detalhes(self):
         async with self.conexoes() as conectar:
             socket = await conectar()
@@ -2395,6 +2599,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
                 self.assertNotIn("detalhe interno", str(erro))
                 self.assertEqual((await socket.receive_output())["code"], 1013)
 
+    # Confere o limite de envio compartilhado entre HTTP e WebSocket.
     async def test_limite_de_envio_e_compartilhado_entre_http_e_websocket(self):
         with patch.object(UserRateThrottle, "get_rate", return_value="1/min"):
             async with self.conexoes() as conectar:
@@ -2410,6 +2615,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
                 self.assertGreater(erro["tente_novamente_em"], 0)
                 self.assertEqual(await Mensagem.objects.acount(), 1)
 
+    # Confere a confirmação e a publicação das leituras para os dois lados.
     async def test_leitura_e_confirmada_e_publicada_para_os_dois_lados(self):
         resposta = await database_sync_to_async(self.enviar_http)()
         async with self.conexoes() as conectar:
@@ -2425,6 +2631,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
             self.assertEqual(recebida["type"], "conversa.lida")
             self.assertEqual(recebida["por"], "henrique")
 
+    # Confere o fechamento dos sockets e a revogação do token no logout.
     async def test_logout_fecha_sockets_e_revoga_token(self):
         async with self.conexoes() as conectar:
             socket = await conectar(self.token)
@@ -2433,6 +2640,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
             self.assertEqual((await socket.receive_output())["code"], 4401)
             self.assertFalse(await Token.objects.filter(pk=self.token.pk).aexists())
 
+    # Confere a revalidação de revogação e desativação em um socket aberto.
     async def test_revogacao_e_desativacao_sao_revalidadas_no_socket_aberto(self):
         async with self.conexoes() as conectar:
             socket = await conectar(self.token)
@@ -2447,6 +2655,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
             })
             self.assertEqual((await outro.receive_output())["code"], 4401)
 
+    # Confere o fechamento do socket após retirar a permissão de superusuário.
     async def test_remover_superuser_fecha_socket_antes_de_entregar_dados_privados(self):
         async with self.conexoes() as conectar:
             operador = await conectar(self.token_operador)

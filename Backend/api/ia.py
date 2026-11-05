@@ -7,8 +7,6 @@ from rest_framework import serializers
 from rest_framework.exceptions import APIException
 
 
-# Fonte: informações profissionais publicadas em Home.tsx. Atualize esta base
-# junto do portfólio; não inclua dados privados nem segredos de configuração.
 BASE_PORTFOLIO = {
     "apresentacao": (
         "Sou o assistente do portfólio de Henrique Volpini Gonçalves. Henrique é "
@@ -88,16 +86,19 @@ Base profissional autorizada:
 """.strip() + "\n" + json.dumps(BASE_PORTFOLIO, ensure_ascii=False)
 
 
+# Representa uma falha temporária no serviço do assistente.
 class AssistenteIndisponivel(APIException):
     status_code = 503
     default_detail = "O assistente está temporariamente indisponível. Tente novamente."
     default_code = "assistente_indisponivel"
 
 
+# Informa se o assistente possui uma chave de API configurada.
 def assistente_ativo():
     return bool(settings.GEMINI_API_KEY)
 
 
+# Solicita ao Gemini uma resposta baseada no portfólio e valida o texto recebido.
 def gerar_resposta(historico):
     if not assistente_ativo() or re.fullmatch(r"[a-zA-Z0-9._-]+", settings.GEMINI_MODEL) is None:
         raise AssistenteIndisponivel()
@@ -136,7 +137,6 @@ def gerar_resposta(historico):
         RequestException, serializers.ValidationError, ValueError, KeyError,
         IndexError, TypeError, AttributeError, RecursionError,
     ):
-        # Nunca exponha mensagens do provedor, credenciais ou o corpo da resposta.
         raise AssistenteIndisponivel() from None
 
     return resposta_validada

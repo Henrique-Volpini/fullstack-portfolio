@@ -8,16 +8,19 @@ from rest_framework.authtoken.models import Token
 from rest_framework.exceptions import APIException, AuthenticationFailed
 
 
+# Representa uma falha temporária no serviço de autenticação.
 class SessaoIndisponivel(APIException):
     status_code = 503
     default_detail = "A autenticação está temporariamente indisponível. Tente novamente."
     default_code = "sessao_indisponivel"
 
 
+# Calcula a data de expiração de um token.
 def expira_em(token: Token) -> datetime:
     return token.created + timedelta(seconds=settings.AUTH_TOKEN_TTL_SECONDS)
 
 
+# Valida o token e verifica a atividade da conta e o prazo da sessão.
 def validar_token(chave: str) -> Token:
     if not isinstance(chave, str) or not chave:
         raise AuthenticationFailed("Token inválido.")
@@ -37,12 +40,15 @@ def validar_token(chave: str) -> Token:
     return token
 
 
+# Autentica requisições com tokens sujeitos a expiração.
 class TokenExpiravelAuthentication(TokenAuthentication):
+    # Retorna o usuário e o token após validar as credenciais.
     def authenticate_credentials(self, key):
         token = validar_token(key)
         return token.user, token
 
 
+# Obtém um token válido e renova os expirados com controle de concorrência.
 def obter_token_acesso(usuario) -> Token:
     if not usuario.is_active:
         raise AuthenticationFailed("Esta conta está desativada.")
@@ -55,8 +61,6 @@ def obter_token_acesso(usuario) -> Token:
                 return token
 
             nova_chave = Token.generate_key()
-            # O UPDATE condicional permite apenas uma renovação, também no SQLite.
-            # A transação curta isola uma eventual colisão de chave do chamador.
             with transaction.atomic():
                 alterados = Token.objects.filter(
                     key=token.key, user_id=usuario.pk
@@ -65,7 +69,6 @@ def obter_token_acesso(usuario) -> Token:
                 token.key = nova_chave
                 token.created = agora
                 return token
-            # Outro login renovou o token ou o logout o removeu: releia o estado.
         except IntegrityError:
             continue
         except DatabaseError:

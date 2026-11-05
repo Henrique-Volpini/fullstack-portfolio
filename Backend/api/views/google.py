@@ -27,6 +27,7 @@ from ..models import ContaGoogle
 from ..serializers import CadastroUsuarioSerializer, LoginGoogleSerializer
 
 
+# Representa a indisponibilidade temporária do login Google.
 class LoginGoogleIndisponivel(APIException):
     status_code = 503
     default_detail = "O login com Google está temporariamente indisponível. Tente novamente."
@@ -34,11 +35,11 @@ class LoginGoogleIndisponivel(APIException):
 
 
 GOOGLE_CERTIFICADOS_URL = "https://www.googleapis.com/oauth2/v1/certs"
-# Somente certificados públicos; estado e limite de rede independentes por processo.
 _cache_certificados_google = None
 _trava_certificados_google = Lock()
 
 
+# Calcula o prazo restante de validade dos certificados.
 def _validade_cache_google(headers, *, agora, duracao):
     headers = CaseInsensitiveDict(headers)
     politica = headers.get("Cache-Control", "")
@@ -68,6 +69,7 @@ def _validade_cache_google(headers, *, agora, duracao):
     return max(0, prazo - idade - duracao)
 
 
+# Obtém os certificados Google e reutiliza o cache válido.
 def _requisitar_certificados_google(url, method="GET"):
     global _cache_certificados_google
     if url != GOOGLE_CERTIFICADOS_URL or method != "GET":
@@ -108,6 +110,7 @@ def _requisitar_certificados_google(url, method="GET"):
         _trava_certificados_google.release()
 
 
+# Autentica contas com credenciais verificadas do Google.
 class LoginGoogleView(APIView):
     permission_classes = (AllowAny,)
     authentication_classes = ()
@@ -115,9 +118,11 @@ class LoginGoogleView(APIView):
     throttle_scope = "login"
     http_method_names = ("post", "options")
 
+    # Informa o esquema de autenticação nas respostas.
     def get_authenticate_header(self, request):
         return "Token"
 
+    # Valida o login Google e retorna o token local.
     def post(self, request):
         validacao = LoginGoogleSerializer(data=request.data)
         validacao.is_valid(raise_exception=True)
