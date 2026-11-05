@@ -3,6 +3,7 @@ import banestesLogo from "../../assets/banestes-logo.png";
 import profilePhoto from "../../assets/perfil-henrique.webp";
 import AuthPanel from "../Auth/AuthPanel";
 import CopyLinkButton from "./CopyLinkButton";
+import PrivacyNotice from "./PrivacyNotice";
 import ThemeToggle from "./ThemeToggle";
 import "../../styles/theme.css";
 import "../../styles/global.css";
@@ -586,6 +587,11 @@ function Home() {
             </ul>
           </div>
         </section>
+
+        <footer className="home-footer home-container">
+          <p className="home-footer-note">© {new Date().getFullYear()} Henrique Volpini</p>
+          <PrivacyNotice />
+        </footer>
       </main>
       <AuthPanel />
     </>
