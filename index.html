@@ -1,6 +1,16 @@
-<script type="module" crossorigin src="/fullstack-portfolio/assets/index-7dRSfvub.js"></script>
-<link rel="stylesheet" crossorigin href="/fullstack-portfolio/assets/index-DlQOrSpj.css">
-
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
+  <script>
+    try {
+      var theme = window.localStorage.getItem("portfolio.theme");
+      if (theme === "cianotipo" || theme === "prancheta" || theme === "anil") {
+        document.documentElement.setAttribute("data-theme", theme);
+      }
+    } catch (error) {}
+  </script>
+  <script type="module" crossorigin src="/assets/index-Bz_nYwqJ.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-BK73xcj3.css">
+</head>
 <body>
   <div id="root"></div>
 </body>
