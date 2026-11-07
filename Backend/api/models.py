@@ -13,6 +13,12 @@ class ContaGoogle(models.Model):
     sub = models.CharField(max_length=255, unique=True)
 
 
+# Impede a reutilização de uma credencial Google sem armazenar o token original.
+class CredencialGoogleUtilizada(models.Model):
+    impressao = models.CharField(max_length=64, primary_key=True)
+    expira_em = models.DateTimeField(db_index=True)
+
+
 # Armazena uma conversa do usuário com Henrique ou com o assistente.
 class Conversa(models.Model):
     # Define os destinatários disponíveis para uma conversa.

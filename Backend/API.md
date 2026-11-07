@@ -130,7 +130,7 @@ Dados ausentes/inválidos retornam `400`. O limite geral do endpoint também pod
 
 Autentica uma conta Google e cria seu perfil local no primeiro acesso. Configure `GOOGLE_CLIENT_ID` no `Backend/.env` com o Client ID do aplicativo Web autorizado no Google. Não exige Client Secret nem endpoint de callback no backend: o cliente recebe o ID token do Google e o envia nesta requisição.
 
-Após atualizar o backend, execute `python manage.py makemigrations api` e `python manage.py migrate` para criar o vínculo `ContaGoogle` no banco, seguindo a preparação descrita no início deste documento.
+Após atualizar o backend, execute `python manage.py makemigrations api` e `python manage.py migrate` para criar o vínculo `ContaGoogle` e o registro `CredencialGoogleUtilizada` no banco, seguindo a preparação descrita no início deste documento.
 
 Aceita somente `Content-Type: application/json`.
 
@@ -151,6 +151,10 @@ Antes de qualquer consulta externa, o servidor exige três segmentos base64url, 
 Somente os certificados públicos são guardados em cache na memória de cada processo, entre requisições; não há cache de ID tokens ou sessões. A validade considera `Cache-Control: max-age`, `Age`, `Date` e `Expires`. Respostas com `no-cache`, `no-store` ou sem validade informada não são reutilizadas; certificados vencidos também não são usados. Com certificados válidos em cache, a validação continua funcionando mesmo se o Google estiver indisponível. Quando uma consulta externa é necessária, há no máximo uma em andamento por processo, com timeout de 5 segundos; outra tentativa que necessite de consulta simultânea recebe `503` e pode ser repetida. O cache não exige Redis ou PostgreSQL.
 
 O vínculo é identificado exclusivamente pelo `sub` único da conta Google. Não há associação automática com contas locais por e-mail ou nome de usuário. No primeiro acesso, cria um usuário comum com senha inutilizável e nome de usuário aleatório no formato `google_<uuid>`; os nomes fornecidos pelo Google são limitados a 150 caracteres em cada campo. Nos próximos acessos com o mesmo `sub`, reutiliza a conta e seu token local enquanto válido, sem renovar o prazo; se estiver vencido, substitui o token. Contas desativadas não podem entrar.
+
+Cada ID token Google só pode concluir um login. O servidor guarda apenas sua impressão SHA-256 e expiração; a unicidade no banco e a transação com a emissão do token local impedem duas utilizações, inclusive simultâneas ou após logout. A impressão considera os bytes da assinatura, para impedir reuso com outra representação base64url equivalente. Os registros vencidos são removidos nos próximos logins, respeitando o segundo limite aceito pelo verificador Google.
+
+Uma credencial já utilizada retorna `401`; obtenha outra credencial pelo botão Google. Se o login foi confirmado no servidor, mas a resposta se perdeu, também será necessária uma credencial nova. Falhas antes da confirmação da transação não consomem a credencial. Essa proteção não impede o primeiro uso de uma credencial roubada antes do login legítimo.
 
 Resposta `200`, tanto na criação quanto nos acessos seguintes:
 
@@ -176,6 +180,8 @@ No frontend, `VITE_GOOGLE_CLIENT_ID` fica em `Frontend/.env` com o mesmo Client 
 Exige o token no cabeçalho e não recebe corpo. Resposta `204`, sem JSON.
 
 Revoga o token utilizado e notifica os WebSockets desse acesso para encerramento. Como o token é compartilhado pelos logins da conta, a revogação também afeta outros dispositivos que o utilizem. Logout continua permitido quando a cota HTTP do chat está esgotada. Token inválido, ausente ou vencido retorna `401`; nesse caso, o cliente pode apenas limpar a sessão local.
+
+Sem uma resposta `204` ou `401`, a revogação não está confirmada. Limpar a sessão no navegador não garante a invalidação no servidor: uma cópia do token pode continuar válida até expirar.
 
 ### GET `/chat/`
 

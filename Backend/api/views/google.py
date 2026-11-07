@@ -1,4 +1,7 @@
 import json
+from base64 import urlsafe_b64decode
+from datetime import UTC, datetime
+from hashlib import sha256
 from threading import Lock
 from time import monotonic, time
 from types import SimpleNamespace
@@ -6,7 +9,8 @@ from uuid import uuid4
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.db import DatabaseError
+from django.db import DatabaseError, transaction
+from django.utils import timezone
 from django.utils.http import parse_http_date_safe
 from google.auth import crypt as google_crypt
 from google.auth.exceptions import GoogleAuthError, TransportError
@@ -23,7 +27,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from ..authentication import obter_token_acesso
-from ..models import ContaGoogle
+from ..models import ContaGoogle, CredencialGoogleUtilizada
 from ..serializers import CadastroUsuarioSerializer, LoginGoogleSerializer
 
 
@@ -144,34 +148,54 @@ class LoginGoogleView(APIView):
         email = perfil.get("email")
         nome = perfil.get("given_name", "")
         sobrenome = perfil.get("family_name", "")
+        expiracao = perfil.get("exp")
         if (
             not isinstance(sub, str) or not sub.strip() or len(sub) > 255
             or perfil.get("email_verified") is not True
             or not isinstance(email, str)
             or not isinstance(nome, str) or not isinstance(sobrenome, str)
+            or not isinstance(expiracao, int) or isinstance(expiracao, bool)
         ):
             raise AuthenticationFailed("Credencial do Google inválida ou expirada.")
         try:
             email = serializers.EmailField(max_length=254).run_validation(email)
-        except serializers.ValidationError:
+            expira_em = datetime.fromtimestamp(expiracao, UTC)
+            trecho_assinado, assinatura = validacao.validated_data["credential"].rsplit(".", 1)
+            assinatura = urlsafe_b64decode(assinatura + "=" * (-len(assinatura) % 4))
+        except (serializers.ValidationError, ValueError, OverflowError, OSError):
             raise AuthenticationFailed("Credencial do Google inválida ou expirada.") from None
 
+        # Assinaturas com bits de preenchimento diferentes representam a mesma credencial.
+        impressao = sha256(trecho_assinado.encode("ascii") + b"." + assinatura).hexdigest()
         try:
-            conta, _ = ContaGoogle.objects.select_related("usuario").get_or_create(
-                sub=sub,
-                defaults={
-                    "usuario": lambda: get_user_model().objects.create_user(
-                        username=f"google_{uuid4().hex}",
-                        password=None,
-                        email=email,
-                        first_name=nome[:150],
-                        last_name=sobrenome[:150],
-                    ),
-                },
-            )
+            with transaction.atomic():
+                # A biblioteca aceita o token até o fim do segundo informado em exp.
+                agora = timezone.now().replace(microsecond=0)
+                if expira_em < agora:
+                    raise AuthenticationFailed("Credencial do Google inválida ou expirada.")
+                CredencialGoogleUtilizada.objects.filter(expira_em__lt=agora).delete()
+                _, criada = CredencialGoogleUtilizada.objects.get_or_create(
+                    impressao=impressao, defaults={"expira_em": expira_em},
+                )
+                if not criada:
+                    raise AuthenticationFailed(
+                        "Esta credencial do Google já foi utilizada. Entre novamente pelo Google."
+                    )
+                conta, _ = ContaGoogle.objects.select_related("usuario").get_or_create(
+                    sub=sub,
+                    defaults={
+                        "usuario": lambda: get_user_model().objects.create_user(
+                            username=f"google_{uuid4().hex}",
+                            password=None,
+                            email=email,
+                            first_name=nome[:150],
+                            last_name=sobrenome[:150],
+                        ),
+                    },
+                )
 
-            usuario = conta.usuario
-            token_acesso = obter_token_acesso(usuario)
+                usuario = conta.usuario
+                token_acesso = obter_token_acesso(usuario)
         except DatabaseError:
             raise LoginGoogleIndisponivel() from None
 

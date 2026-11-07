@@ -3,10 +3,10 @@ import bz2
 import json
 import uuid
 import zlib
-from base64 import b64encode, urlsafe_b64encode
+from base64 import b64encode, urlsafe_b64decode, urlsafe_b64encode
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone as datetime_timezone
 from email.utils import formatdate
 from threading import Barrier, Event, Lock
 from time import time
@@ -36,7 +36,7 @@ from rest_framework.test import APIClient, APITestCase
 from rest_framework.throttling import UserRateThrottle
 from twisted.internet.testing import StringTransport
 
-from .models import ContaGoogle, Conversa, Mensagem
+from .models import ContaGoogle, Conversa, CredencialGoogleUtilizada, Mensagem
 from .views.chat import (
     enviar_mensagem, grupo_usuario, publicar_evento, registrar_resposta_assistente,
 )
@@ -563,6 +563,7 @@ class LoginGoogleTests(APITestCase):
             "sub": "123456789012345678901",
             "email": "visitante@example.com",
             "email_verified": True,
+            "exp": int(time()) + 86400,
             "given_name": "Ana",
             "family_name": "Silva",
         }
@@ -574,8 +575,11 @@ class LoginGoogleTests(APITestCase):
 
     # Envia uma tentativa de login Google com dados configuráveis.
     def login(self, dados=None, **headers):
+        self.ultima_credencial = credencial_google_teste(perfil={
+            "sub": self.claims["sub"], "jti": str(uuid.uuid4()),
+        }) if dados is None else None
         return self.client.post(
-            "/login/google/", {"credential": CREDENCIAL_GOOGLE_TESTE} if dados is None else dados,
+            "/login/google/", {"credential": self.ultima_credencial} if dados is None else dados,
             format="json", REMOTE_ADDR="192.0.2.10", **headers,
         )
 
@@ -584,6 +588,7 @@ class LoginGoogleTests(APITestCase):
         self.assertEqual(get_user_model().objects.count(), 0)
         self.assertEqual(ContaGoogle.objects.count(), 0)
         self.assertEqual(Token.objects.count(), 0)
+        self.assertEqual(CredencialGoogleUtilizada.objects.count(), 0)
 
     # Confere a criação da conta Google sem senha local utilizável.
     def test_login_cria_conta_com_senha_inutilizavel_e_retorna_token_da_api(self):
@@ -608,7 +613,7 @@ class LoginGoogleTests(APITestCase):
             },
         })
         argumentos, opcoes = self.verificador.call_args
-        self.assertEqual(argumentos[0], CREDENCIAL_GOOGLE_TESTE)
+        self.assertEqual(argumentos[0], self.ultima_credencial)
         audience = opcoes.get("audience", argumentos[2] if len(argumentos) > 2 else None)
         self.assertEqual(audience, "cliente-google.apps.googleusercontent.com")
         self.assertNotIn("sessionid", resposta.cookies)
@@ -740,14 +745,19 @@ class LoginGoogleTests(APITestCase):
             {"email": None}, {"email": []}, {"email": 123}, {"email": "invalido"},
             {"email": f"{'a' * 64}@{'b' * 63}.{'c' * 63}.{'d' * 62}"},
             {"email_verified": False}, {"email_verified": "true"}, {"email_verified": 1},
+            {"exp": None}, {"exp": True}, {"exp": []}, {"exp": {}},
+            {"exp": str(self.claims["exp"])}, {"exp": float(self.claims["exp"])},
+            {"exp": -1}, {"exp": 10 ** 100}, {"exp": -(10 ** 100)},
         )
         for alteracao in invalidas:
             with self.subTest(alteracao=alteracao):
+                cache.clear()
                 self.verificador.return_value = {**self.claims, **alteracao}
                 self.assertEqual(self.login().status_code, 401)
                 self.verificar_sem_contas()
-        for campo in ("sub", "email", "email_verified"):
+        for campo in ("sub", "email", "email_verified", "exp"):
             with self.subTest(campo_ausente=campo):
+                cache.clear()
                 self.verificador.return_value = {
                     chave: valor for chave, valor in self.claims.items() if chave != campo
                 }
@@ -874,7 +884,7 @@ class LoginGoogleTests(APITestCase):
         self.assertGreater(int(limitada["Retry-After"]), 0)
         self.verificador.assert_not_called()
         outro_ip = self.client.post(
-            "/login/google/", {"credential": CREDENCIAL_GOOGLE_TESTE},
+            "/login/google/", {"credential": credencial_google_teste(perfil={"jti": str(uuid.uuid4())})},
             format="json", REMOTE_ADDR="192.0.2.11",
         )
         self.assertEqual(outro_ip.status_code, 200)
@@ -1005,6 +1015,143 @@ class LoginGoogleTokensAssinadosTests(APITestCase):
         self.assertEqual(ContaGoogle.objects.count(), 1)
         self.assertEqual(Token.objects.count(), 1)
 
+    # Confere que uma credencial consumida não recupera nem recria a sessão.
+    def test_reuso_da_credencial_assinada_e_rejeitado_antes_e_depois_do_logout(self):
+        credential = self.token()
+        primeira = self.login(credential)
+        self.assertEqual(primeira.status_code, 200)
+        repetida = self.login(credential)
+        self.assertEqual(repetida.status_code, 401)
+        self.assertIn("utilizada", repetida.json()["detail"])
+        self.client.credentials(HTTP_AUTHORIZATION=f"Token {primeira.json()['token']}")
+        self.assertEqual(self.client.post("/logout/").status_code, 204)
+        self.client.credentials()
+        self.assertEqual(self.login(credential).status_code, 401)
+        self.assertFalse(Token.objects.exists())
+        self.assertEqual(CredencialGoogleUtilizada.objects.count(), 1)
+        self.assertEqual(get_user_model().objects.count(), 1)
+        self.assertEqual(ContaGoogle.objects.count(), 1)
+
+    # Confere que um ID token novo da mesma conta permite outro login legítimo.
+    def test_nova_credencial_assinada_da_mesma_conta_permite_login_apos_logout(self):
+        primeira = self.login(self.token())
+        self.assertEqual(primeira.status_code, 200)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Token {primeira.json()['token']}")
+        self.assertEqual(self.client.post("/logout/").status_code, 204)
+        self.client.credentials()
+        nova = self.login(self.token({"jti": "nova-tentativa"}))
+        self.assertEqual(nova.status_code, 200)
+        self.assertEqual(nova.json()["usuario"], primeira.json()["usuario"])
+        self.assertNotEqual(nova.json()["token"], primeira.json()["token"])
+        self.assertEqual(CredencialGoogleUtilizada.objects.count(), 2)
+        self.assertEqual(get_user_model().objects.count(), 1)
+        self.assertEqual(ContaGoogle.objects.count(), 1)
+
+    # Confere que bits de preenchimento base64 não disfarçam a mesma assinatura.
+    def test_variante_base64_da_assinatura_nao_contorna_consumo_unico(self):
+        credential = self.token()
+        cabecalho, corpo, assinatura = credential.split(".")
+        alfabeto = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        self.assertEqual(len(assinatura) % 4, 2)
+        variante = assinatura[:-1] + alfabeto[alfabeto.index(assinatura[-1]) ^ 1]
+        self.assertNotEqual(assinatura, variante)
+        self.assertEqual(urlsafe_b64decode(assinatura + "=="), urlsafe_b64decode(variante + "=="))
+        alternativa = f"{cabecalho}.{corpo}.{variante}"
+        self.assertEqual(google_jwt.decode(
+            alternativa, certs=self.certificados,
+            audience="cliente-google.apps.googleusercontent.com",
+        )["sub"], self.claims["sub"])
+        self.assertEqual(self.login(credential).status_code, 200)
+        repetida = self.login(alternativa)
+        self.assertEqual(repetida.status_code, 401)
+        self.assertIn("utilizada", repetida.json()["detail"])
+        self.assertEqual(CredencialGoogleUtilizada.objects.count(), 1)
+
+    # Confere o bloqueio de replay até terminar o segundo aceito pela biblioteca.
+    def test_segundo_exato_da_expiracao_nao_libera_credencial_consumida(self):
+        vencimento = datetime.fromtimestamp(self.claims["exp"], datetime_timezone.utc)
+        credential = self.token()
+        with (
+            patch("google.auth._helpers.utcnow", return_value=vencimento.replace(tzinfo=None)),
+            patch("api.views.google.timezone.now", return_value=vencimento + timedelta(microseconds=900000)),
+        ):
+            self.assertEqual(self.login(credential).status_code, 200)
+            repetida = self.login(credential)
+        self.assertEqual(repetida.status_code, 401)
+        self.assertIn("utilizada", repetida.json()["detail"])
+        self.assertEqual(CredencialGoogleUtilizada.objects.get().expira_em, vencimento)
+
+    # Confere que registros consumidos são limpos somente após a validade completa.
+    def test_limpeza_preserva_credenciais_validas_no_segundo_atual(self):
+        agora = timezone.now().replace(microsecond=0)
+        for impressao, vencimento in (
+            ("a" * 64, agora - timedelta(seconds=1)),
+            ("b" * 64, agora),
+            ("c" * 64, agora + timedelta(seconds=60)),
+        ):
+            CredencialGoogleUtilizada.objects.create(impressao=impressao, expira_em=vencimento)
+        with patch("api.views.google.timezone.now", return_value=agora + timedelta(microseconds=900000)):
+            self.assertEqual(self.login(self.token()).status_code, 200)
+        self.assertFalse(CredencialGoogleUtilizada.objects.filter(pk="a" * 64).exists())
+        self.assertTrue(CredencialGoogleUtilizada.objects.filter(pk="b" * 64).exists())
+        self.assertTrue(CredencialGoogleUtilizada.objects.filter(pk="c" * 64).exists())
+        with patch("api.views.google.timezone.now", return_value=agora + timedelta(seconds=1)):
+            self.assertEqual(self.login(self.token({"jti": "segundo-seguinte"})).status_code, 200)
+        self.assertFalse(CredencialGoogleUtilizada.objects.filter(pk="b" * 64).exists())
+        self.assertTrue(CredencialGoogleUtilizada.objects.filter(pk="c" * 64).exists())
+
+    # Confere nova verificação do prazo após a validação criptográfica e antes da emissão.
+    def test_credencial_que_expira_antes_da_transacao_nao_e_consumida(self):
+        vencimento = datetime.fromtimestamp(self.claims["exp"], datetime_timezone.utc)
+        with (
+            patch("google.auth._helpers.utcnow", return_value=(vencimento - timedelta(seconds=1)).replace(tzinfo=None)),
+            patch("api.views.google.timezone.now", return_value=vencimento + timedelta(seconds=1)),
+        ):
+            resposta = self.login(self.token())
+        self.assertEqual(resposta.status_code, 401)
+        self.assertFalse(CredencialGoogleUtilizada.objects.exists())
+        self.assertFalse(get_user_model().objects.exists())
+        self.assertFalse(ContaGoogle.objects.exists())
+        self.assertFalse(Token.objects.exists())
+
+    # Confere rollback do consumo e da conta se a emissão do token falhar.
+    def test_falha_na_emissao_reverte_consumo_e_conta_e_permite_reenvio(self):
+        from .authentication import SessaoIndisponivel
+
+        # Simula falha após inserir o token para verificar também seu rollback.
+        def emitir_e_falhar(usuario):
+            Token.objects.create(user=usuario)
+            raise SessaoIndisponivel()
+
+        credential = self.token()
+        for falha in (OperationalError("detalhe interno"), emitir_e_falhar):
+            with self.subTest(falha=falha):
+                with patch("api.views.google.obter_token_acesso", side_effect=falha):
+                    resposta = self.login(credential)
+                self.assertEqual(resposta.status_code, 503)
+                self.assertNotIn("detalhe interno", str(resposta.json()))
+                self.assertFalse(CredencialGoogleUtilizada.objects.exists())
+                self.assertFalse(get_user_model().objects.exists())
+                self.assertFalse(ContaGoogle.objects.exists())
+                self.assertFalse(Token.objects.exists())
+        self.assertEqual(self.login(credential).status_code, 200)
+        self.assertEqual(self.login(credential).status_code, 401)
+        self.assertEqual(CredencialGoogleUtilizada.objects.count(), 1)
+
+    # Confere falha fechada no registro de consumo sem invalidar o reenvio legítimo.
+    def test_falha_ao_registrar_consumo_nao_autentica_e_permite_reenvio(self):
+        credential = self.token()
+        with patch.object(CredencialGoogleUtilizada, "save", side_effect=OperationalError("detalhe interno")):
+            resposta = self.login(credential)
+        self.assertEqual(resposta.status_code, 503)
+        self.assertNotIn("detalhe interno", str(resposta.json()))
+        self.assertFalse(CredencialGoogleUtilizada.objects.exists())
+        self.assertFalse(get_user_model().objects.exists())
+        self.assertFalse(ContaGoogle.objects.exists())
+        self.assertFalse(Token.objects.exists())
+        self.assertEqual(self.login(credential).status_code, 200)
+        self.assertEqual(CredencialGoogleUtilizada.objects.count(), 1)
+
 
 # Verifica a validade e a renovação do cache de certificados Google.
 @override_settings(**CONFIG_TESTES, GOOGLE_CLIENT_ID="cliente-google.apps.googleusercontent.com")
@@ -1057,6 +1204,7 @@ class CertificadosGoogleTests(APITestCase):
             "sub": "sub-cache-certificados", "email": "cache@example.com", "email_verified": True,
             "iss": "https://accounts.google.com", "aud": "cliente-google.apps.googleusercontent.com",
             "iat": agora - 30, "exp": agora + 3600,
+            "jti": str(uuid.uuid4()),
         }).decode("ascii")
         return self.client.post("/login/google/", {"credential": credential}, format="json")
 
@@ -1245,6 +1393,7 @@ class LoginGoogleConcorrenciaTests(TransactionTestCase):
         claims = {
             "sub": "sub-google-concorrente", "email": "concorrente@example.com",
             "email_verified": True,
+            "exp": int(time()) + 3600,
         }
 
         # Sincroniza a validação das duas credenciais Google simuladas.
@@ -1271,10 +1420,16 @@ class LoginGoogleConcorrenciaTests(TransactionTestCase):
                 tarefas = [executor.submit(enviar) for _ in range(2)]
                 respostas = [tarefa.result(timeout=15) for tarefa in tarefas]
         self.assertEqual(len({conexao for conexao, _, _ in respostas}), 2)
-        self.assertTrue(all(status in (200, 503) for _, status, _ in respostas), respostas)
+        self.assertTrue(all(status in (200, 401, 503) for _, status, _ in respostas), respostas)
+        self.assertLessEqual(sum(status == 200 for _, status, _ in respostas), 1, respostas)
+        self.assertEqual(
+            CredencialGoogleUtilizada.objects.count(),
+            sum(status == 200 for _, status, _ in respostas),
+        )
         with patch("api.views.google.id_token.verify_oauth2_token", return_value=claims):
             repetida = self.client.post(
-                "/login/google/", {"credential": CREDENCIAL_GOOGLE_TESTE}, format="json"
+                "/login/google/", {"credential": credencial_google_teste(perfil={"jti": "novo-login"})},
+                format="json",
             )
         self.assertEqual(repetida.status_code, 200)
         self.assertEqual(get_user_model().objects.count(), 1)
@@ -1287,6 +1442,77 @@ class LoginGoogleConcorrenciaTests(TransactionTestCase):
             if status == 200:
                 self.assertEqual(dados["token"], repetida.json()["token"])
                 self.assertEqual(dados["usuario"]["id"], conta.usuario_id)
+
+    # Confere unicidade do consumo com assinatura real e conexões de banco distintas.
+    def test_mesma_credencial_assinada_concorrente_tem_no_maximo_um_sucesso(self):
+        from .views import google
+
+        chave = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        assinador = google_crypt.RSASigner(chave, key_id="chave-concorrente")
+        certificados = {"chave-concorrente": chave.public_key().public_bytes(
+            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).decode("ascii")}
+        agora = int(time())
+        credential = google_jwt.encode(assinador, {
+            "sub": "sub-assinado-concorrente", "email": "concorrente@example.com",
+            "email_verified": True, "iss": "https://accounts.google.com",
+            "aud": "cliente-google.apps.googleusercontent.com",
+            "iat": agora - 60, "exp": agora + 3600,
+        }).decode("ascii")
+        resposta_certificados = SimpleNamespace(
+            status=200, data=json.dumps(certificados).encode("utf-8"),
+            headers={"Cache-Control": "max-age=600"},
+        )
+        barreira = Barrier(2)
+        verificador_original = google.id_token.verify_oauth2_token
+
+        # Alinha requisições antes da validação real sem substituir suas garantias.
+        def verificar(*args, **kwargs):
+            barreira.wait(timeout=5)
+            return verificador_original(*args, **kwargs)
+
+        # Envia a mesma credencial por conexões separadas e fecha cada conexão.
+        def enviar():
+            close_old_connections()
+            try:
+                connection.ensure_connection()
+                conexao = id(connection.connection)
+                resposta = APIClient().post(
+                    "/login/google/", {"credential": credential}, format="json",
+                    REMOTE_ADDR="192.0.2.21",
+                )
+                return conexao, resposta.status_code
+            finally:
+                close_old_connections()
+
+        with (
+            patch("api.views.google._cache_certificados_google", None),
+            patch("api.views.google.GoogleRequest") as transporte,
+        ):
+            transporte.return_value.return_value = resposta_certificados
+            google._requisitar_certificados_google(google.GOOGLE_CERTIFICADOS_URL)
+            with patch("api.views.google.id_token.verify_oauth2_token", side_effect=verificar):
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    respostas = [tarefa.result(timeout=15) for tarefa in
+                                 [executor.submit(enviar) for _ in range(2)]]
+            self.assertEqual(len({conexao for conexao, _ in respostas}), 2)
+            self.assertTrue(all(status in (200, 401, 503) for _, status in respostas), respostas)
+            sucessos = sum(status == 200 for _, status in respostas)
+            self.assertLessEqual(sucessos, 1, respostas)
+            self.assertEqual(CredencialGoogleUtilizada.objects.count(), sucessos)
+            if not sucessos:
+                self.assertEqual(self.client.post(
+                    "/login/google/", {"credential": credential}, format="json",
+                ).status_code, 200)
+            repetida = self.client.post(
+                "/login/google/", {"credential": credential}, format="json",
+            )
+        self.assertEqual(repetida.status_code, 401)
+        self.assertIn("utilizada", repetida.json()["detail"])
+        self.assertEqual(CredencialGoogleUtilizada.objects.count(), 1)
+        self.assertEqual(get_user_model().objects.count(), 1)
+        self.assertEqual(ContaGoogle.objects.count(), 1)
+        self.assertEqual(Token.objects.count(), 1)
 
 
 # Verifica a renovação concorrente de tokens pelos dois tipos de login.
@@ -1307,14 +1533,7 @@ class TokenExpiracaoConcorrenciaTests(TransactionTestCase):
 
     # Confere que logins simultâneos compartilham uma única renovação de token.
     def test_logins_senha_e_google_concorrentes_compartilham_uma_unica_renovacao(self):
-        from .authentication import obter_token_acesso
-
         barreira = Barrier(2)
-
-        # Sincroniza as solicitações antes de obter o token de acesso.
-        def obter_sincronizado(usuario):
-            barreira.wait(timeout=5)
-            return obter_token_acesso(usuario)
 
         # Envia um login local ou Google usando uma conexão de banco própria.
         def enviar(tipo):
@@ -1328,6 +1547,7 @@ class TokenExpiracaoConcorrenciaTests(TransactionTestCase):
                 else:
                     caminho = "/login/google/"
                     dados = {"credential": CREDENCIAL_GOOGLE_TESTE}
+                barreira.wait(timeout=5)
                 resposta = APIClient().post(
                     caminho, dados, format="json", REMOTE_ADDR="192.0.2.30",
                 )
@@ -1338,11 +1558,10 @@ class TokenExpiracaoConcorrenciaTests(TransactionTestCase):
         claims = {
             "sub": "sub-token-concorrente", "email": "concorrente@example.com",
             "email_verified": True,
+            "exp": int(time()) + 3600,
         }
         with (
             patch("api.views.google.id_token.verify_oauth2_token", return_value=claims),
-            patch("api.views.usuarios.obter_token_acesso", side_effect=obter_sincronizado),
-            patch("api.views.google.obter_token_acesso", side_effect=obter_sincronizado),
             ThreadPoolExecutor(max_workers=2) as executor,
         ):
             tarefas = [executor.submit(enviar, tipo) for tipo in ("senha", "google")]
