@@ -433,6 +433,15 @@ function ThreadView({
   const handleScroll = () => {
     const element = log.current;
     if (!element) return;
+    // Enquanto o painel anima, a altura do histórico é provisória: mede de novo quando a animação terminar.
+    const panel = element.closest<HTMLElement>(".auth-panel");
+    const resizing = panel?.getAnimations()[0];
+    if (resizing) {
+      void resizing.finished.catch(() => undefined).then(handleScroll);
+      return;
+    }
+    // Minimizado, o histórico quase não tem altura e a distância até o fim não significa nada.
+    if (panel?.dataset.minimized === "true") return;
     const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 64;
     stick.current = nearBottom;
     setAtBottom(nearBottom);
