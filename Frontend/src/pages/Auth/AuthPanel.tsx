@@ -9,7 +9,7 @@ type AuthView = "login" | "cadastro";
 // Qual envio está em andamento, ou idle quando não há nenhum.
 type SubmitState = "idle" | AuthView | "google";
 // Aviso exibido abaixo do formulário.
-type AuthNotice = { type: "error"; message: string };
+type AuthNotice = { type: "error" | "warning"; message: string };
 
 const SESSION_EXPIRED_MESSAGE = "Sua sessão expirou. Entre novamente para continuar.";
 const TOKEN_STORAGE_KEY = "portfolio.chat.token";
@@ -143,6 +143,8 @@ function AuthPanel() {
   }, []);
 
   useEffect(() => {
+    // O botão Sair some junto com o chat; sem levar o foco ao diálogo, Esc e Tab deixam de funcionar.
+    if (notice?.type === "warning") closeButton.current?.focus({ preventScroll: true });
     if (notice) feedback.current?.scrollIntoView({ block: "nearest" });
   }, [notice]);
 
@@ -247,11 +249,19 @@ function AuthPanel() {
   };
 
   // Encerra a sessão local depois do logout.
-  const handleLoggedOut = () => {
+  const handleLoggedOut = (revoked: boolean) => {
     closePanel();
     storeToken(null);
     setAccessToken(null);
     setMinimized(false);
+    if (!revoked) {
+      setView("login");
+      setNotice({
+        type: "warning",
+        message: "Você saiu deste navegador, mas o servidor não confirmou a revogação da sessão. Uma cópia do seu token ainda pode funcionar até a sessão expirar.",
+      });
+      setIsOpen(true);
+    }
   };
 
   // Limpa a sessão expirada e pede para entrar de novo.
@@ -611,7 +621,7 @@ function AuthPanel() {
                     )}
                   </button>
                   {/* Área de avisos: espera em andamento e erros. */}
-                  <div className="auth-panel-feedback" ref={feedback}>
+                  <div className="auth-panel-feedback" data-warning={notice?.type === "warning"} ref={feedback}>
                     {isSubmitting && (
                       <p className="auth-panel-wait" role="status">
                         Aguarde, estamos {submitState === "cadastro" ? "criando sua conta" : submitState === "google" ? "confirmando seu acesso com o Google" : "confirmando seu acesso"}…

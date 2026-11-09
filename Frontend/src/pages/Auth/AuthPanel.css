@@ -477,6 +477,12 @@
   scrollbar-color: var(--auth-metal-line) transparent;
 }
 
+.auth-panel-feedback[data-warning="true"] {
+  height: auto;
+  min-height: 3rem;
+  overflow-y: visible;
+}
+
 /* Mensagens de erro e de espera. */
 .auth-panel-notice,
 .auth-panel-wait {
@@ -487,7 +493,8 @@
   animation: auth-notice-in 320ms ease both;
 }
 
-.auth-panel-notice[data-type="error"] {
+.auth-panel-notice[data-type="error"],
+.auth-panel-notice[data-type="warning"] {
   padding-left: 0.5rem;
   border-left: 2px solid var(--color-error);
   color: var(--color-error);

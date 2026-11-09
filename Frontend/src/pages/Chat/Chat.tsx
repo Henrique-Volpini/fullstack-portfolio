@@ -1,4 +1,5 @@
 import {
+  Component,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -8,8 +9,9 @@ import {
   type CSSProperties,
   type FormEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
-import type { Conversa, Destinatario, Perfil } from "./chatApi";
+import { encerrarSessao, type Conversa, type Destinatario, type Perfil } from "./chatApi";
 import { ChatStore, inboxItems, totalUnread, type Filtro, type Thread, type UiMessage } from "./chatStore";
 import "./Chat.css";
 
@@ -21,7 +23,7 @@ type ChatProps = {
   onClose: () => void;
   onExpand: () => void;
   onToggleMinimized: () => void;
-  onLogout: () => void;
+  onLogout: (revoked: boolean) => void;
   onSessionExpired: () => void;
 };
 
@@ -654,8 +656,59 @@ function ConversationList({
   );
 }
 
+// Botões da barra superior: minimizar e expandir no modo mini; sair e fechar em tela cheia.
+function ChatActions({
+  mode,
+  minimized,
+  loggingOut,
+  onToggleMinimized,
+  onExpand,
+  onLogout,
+  onClose,
+}: {
+  mode: "mini" | "full";
+  minimized: boolean;
+  loggingOut: boolean;
+  onToggleMinimized: () => void;
+  onExpand: () => void;
+  onLogout: () => void;
+  onClose: () => void;
+}) {
+  return mode === "mini" ? (
+    <>
+      <button
+        className="chat-icon chat-toggle"
+        type="button"
+        onClick={onToggleMinimized}
+        aria-label={minimized ? "Restaurar conversa" : "Minimizar conversa"}
+        aria-expanded={!minimized}
+        data-minimized={minimized}
+      >
+        <IconChevron />
+      </button>
+      <button className="chat-icon" type="button" onClick={onExpand} aria-label="Abrir conversa em tela cheia">
+        <IconExpand />
+      </button>
+    </>
+  ) : (
+    <>
+      <button className="chat-text-button" type="button" onClick={onLogout} disabled={loggingOut}>
+        {loggingOut ? "SAINDO…" : "SAIR"}
+      </button>
+      <button
+        className="chat-icon chat-close"
+        type="button"
+        onClick={onClose}
+        aria-label="Fechar janela de conversa"
+      >
+        <IconClose />
+      </button>
+    </>
+  );
+}
+
 // Componente do chat: conexão e abas de destinatário para o visitante, caixa de entrada para o operador.
-function Chat({
+function ChatView({
   token,
   mode,
   minimized,
@@ -725,8 +778,8 @@ function Chat({
   // Encerra a sessão no servidor e avisa o painel.
   const handleLogout = async () => {
     setLoggingOut(true);
-    await store.logout();
-    onLogout();
+    const revoked = await store.logout();
+    onLogout(revoked);
   };
 
   // Limpa o erro da caixa de entrada para tentar abri-la de novo.
@@ -771,37 +824,15 @@ function Chat({
               {unread > 9 ? "9+" : unread}
             </span>
           )}
-          {mode === "mini" ? (
-            <>
-              <button
-                className="chat-icon chat-toggle"
-                type="button"
-                onClick={onToggleMinimized}
-                aria-label={minimized ? "Restaurar conversa" : "Minimizar conversa"}
-                aria-expanded={!minimized}
-                data-minimized={minimized}
-              >
-                <IconChevron />
-              </button>
-              <button className="chat-icon" type="button" onClick={onExpand} aria-label="Abrir conversa em tela cheia">
-                <IconExpand />
-              </button>
-            </>
-          ) : (
-            <>
-              <button className="chat-text-button" type="button" onClick={handleLogout} disabled={loggingOut}>
-                {loggingOut ? "SAINDO…" : "SAIR"}
-              </button>
-              <button
-                className="chat-icon chat-close"
-                type="button"
-                onClick={onClose}
-                aria-label="Fechar janela de conversa"
-              >
-                <IconClose />
-              </button>
-            </>
-          )}
+          <ChatActions
+            mode={mode}
+            minimized={minimized}
+            loggingOut={loggingOut}
+            onToggleMinimized={onToggleMinimized}
+            onExpand={onExpand}
+            onLogout={handleLogout}
+            onClose={onClose}
+          />
         </div>
       </header>
 
@@ -899,6 +930,93 @@ function Chat({
         )}
       </div>
     </div>
+  );
+}
+
+// Aviso exibido no lugar do chat quando ele quebra: mantém os controles do painel e permite tentar de novo ou sair.
+function ChatFailure({
+  token,
+  mode,
+  minimized,
+  onClose,
+  onExpand,
+  onToggleMinimized,
+  onLogout,
+  onRetry,
+}: ChatProps & { onRetry: () => void }) {
+  const [loggingOut, setLoggingOut] = useState(false);
+  const retryButton = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (mode === "full") retryButton.current?.focus();
+  }, [mode]);
+
+  // Revoga a sessão no servidor e avisa o painel, como o botão Sair do chat.
+  const handleLogout = async () => {
+    setLoggingOut(true);
+    onLogout(await encerrarSessao(token));
+  };
+
+  return (
+    // Mesma estrutura do chat, para ocupar o painel nos modos mini, minimizado e tela cheia.
+    <div className="chat" data-mode={mode} data-minimized={minimized}>
+      <header className="chat-top">
+        <div className="chat-id">
+          {minimized ? <span className="chat-peek">Conversa</span> : <span className="chat-label">CONVERSA</span>}
+        </div>
+        <div className="chat-actions">
+          <ChatActions
+            mode={mode}
+            minimized={minimized}
+            loggingOut={loggingOut}
+            onToggleMinimized={onToggleMinimized}
+            onExpand={onExpand}
+            onLogout={handleLogout}
+            onClose={onClose}
+          />
+        </div>
+      </header>
+
+      {/* Corpo com o aviso de erro e o botão para montar o chat de novo. */}
+      <div className="chat-body" aria-hidden={minimized} inert={minimized}>
+        {mode === "full" && <h2 className="chat-title">Conversa indisponível.</h2>}
+        <div className="chat-state-box" role="alert">
+          <p>O chat encontrou um erro inesperado. O restante do site continua funcionando normalmente.</p>
+          <button type="button" ref={retryButton} onClick={onRetry}>
+            TENTAR DE NOVO
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Limite de erro: se algo no chat lançar uma exceção ao renderizar, mostra o aviso sem derrubar o site.
+class ChatErrorBoundary extends Component<
+  { children: ReactNode; fallback: (retry: () => void) => ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  // Troca o chat pelo aviso quando um componente dele falha.
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  // Monta o chat do zero, com uma nova conexão e um novo estado.
+  retry = () => this.setState({ failed: false });
+
+  render() {
+    return this.state.failed ? this.props.fallback(this.retry) : this.props.children;
+  }
+}
+
+// Chat protegido: uma falha inesperada fica restrita ao painel e o resto do site continua no ar.
+function Chat(props: ChatProps) {
+  return (
+    <ChatErrorBoundary fallback={(retry) => <ChatFailure {...props} onRetry={retry} />}>
+      <ChatView {...props} />
+    </ChatErrorBoundary>
   );
 }
 

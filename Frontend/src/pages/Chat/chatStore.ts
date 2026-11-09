@@ -6,6 +6,7 @@ import {
   getConversa,
   getMensagens,
   getPerfil,
+  isMensagem,
   listConversas,
   marcarLida,
   novoUuid,
@@ -104,20 +105,6 @@ export function totalUnread(state: ChatState): number {
 function messageOf(error: unknown): string {
   if (error instanceof ApiError) return error.message;
   return "Não foi possível concluir a solicitação.";
-}
-
-// Confere se um valor recebido pelo WebSocket tem a forma de uma mensagem.
-function isMensagem(value: unknown): value is Mensagem {
-  return (
-    !!value &&
-    typeof value === "object" &&
-    "id" in value &&
-    typeof value.id === "number" &&
-    "conversa_id" in value &&
-    typeof value.conversa_id === "string" &&
-    "id_cliente" in value &&
-    typeof value.id_cliente === "string"
-  );
 }
 
 // Leituras otimistas em voo: requisições, não lidas de antes da primeira e maior id que falhou.
@@ -221,13 +208,10 @@ export class ChatStore {
     this.set((state) => ({ inboxErrors: { ...state.inboxErrors, [destinatario]: undefined } }));
   }
 
-  // Revoga o token no servidor e encerra a store; a sessão local acaba mesmo se a revogação falhar.
-  async logout() {
-    try {
-      await encerrarSessao(this.token);
-    } catch {
-    }
+  // Encerra a conexão local e informa se o servidor confirmou a revogação do token.
+  logout(): Promise<boolean> {
     this.stop();
+    return encerrarSessao(this.token);
   }
 
   // Define a conversa em exibição, carrega seu histórico e agenda a leitura.
