@@ -4,6 +4,8 @@ from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
+from psycopg import ProgrammingError
+from psycopg.conninfo import conninfo_to_dict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -29,13 +31,22 @@ if not SECRET_KEY:
         "Defina DJANGO_SECRET_KEY no ambiente ou no arquivo Backend/.env."
     )
 
-DEBUG = os.environ.get("DJANGO_DEBUG", "False").lower() in {"true", "1", "yes", "on"}
+DEBUG = os.environ.get("DJANGO_DEBUG", "False").strip().lower() in {"true", "1", "yes", "on"}
 
 ALLOWED_HOSTS = [
     host.strip()
     for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "").split(",")
     if host.strip()
 ]
+render_hostname = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "").strip()
+if render_hostname and render_hostname not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append(render_hostname)
+
+if os.environ.get("RENDER") == "true":
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+SECURE_SSL_REDIRECT = not DEBUG
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
 
 
 INSTALLED_APPS = [
@@ -134,6 +145,8 @@ WSGI_APPLICATION = 'config.wsgi.application'
 ASGI_APPLICATION = 'config.asgi.application'
 
 REDIS_URL = os.environ.get("REDIS_URL", "").strip()
+if not DEBUG and not REDIS_URL:
+    raise ImproperlyConfigured("Defina REDIS_URL para habilitar o chat em produção.")
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
@@ -163,12 +176,37 @@ if DEBUG:
     CHAT_WEBSOCKET_ALLOWED_ORIGINS += ["localhost", "127.0.0.1"]
 
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+database_url = os.environ.get("DATABASE_URL", "").strip()
+if database_url:
+    try:
+        database_config = conninfo_to_dict(database_url)
+        database_name = database_config.pop("dbname", "")
+        if not database_name:
+            raise ProgrammingError
+    except ProgrammingError:
+        raise ImproperlyConfigured(
+            "DATABASE_URL deve informar uma conexão PostgreSQL válida com o nome do banco."
+        ) from None
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": database_name,
+            "USER": database_config.pop("user", ""),
+            "PASSWORD": database_config.pop("password", ""),
+            "HOST": database_config.pop("host", ""),
+            "PORT": database_config.pop("port", ""),
+            "OPTIONS": {"connect_timeout": 10, **database_config},
+        },
     }
-}
+elif DEBUG:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        },
+    }
+else:
+    raise ImproperlyConfigured("Defina DATABASE_URL para conectar ao PostgreSQL em produção.")
 
 
 AUTH_PASSWORD_VALIDATORS = [

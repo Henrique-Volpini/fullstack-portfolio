@@ -4,6 +4,36 @@ Os caminhos são relativos ao backend. No desenvolvimento, a base é `http://loc
 
 Como as migrations são mantidas apenas localmente, prepare um banco novo executando, nesta ordem, dentro de `Backend/`: `python manage.py makemigrations api`, `python manage.py migrate` e `python manage.py createcachetable`. O último comando cria a tabela usada pelos limites de requisições.
 
+## Configuração para o Render
+
+Configure as variáveis antes de preparar o banco:
+
+| Variável | Valor em produção |
+| --- | --- |
+| `DJANGO_DEBUG` | `False` |
+| `DJANGO_SECRET_KEY` | Uma chave secreta própria do ambiente |
+| `DATABASE_URL` | Internal Database URL do PostgreSQL do Render |
+| `REDIS_URL` | URL interna do serviço Redis/Render Key Value |
+| `DJANGO_CORS_ALLOWED_ORIGINS` | Origem HTTPS do frontend, sem caminho nem barra final; se houver mais de uma, separar por vírgula |
+| `DJANGO_ALLOWED_HOSTS` | Domínios adicionais da API, separados por vírgula; o hostname fornecido em `RENDER_EXTERNAL_HOSTNAME` é incluído automaticamente |
+| `GOOGLE_CLIENT_ID` | Client ID utilizado pelo frontend para o login Google |
+
+As URLs internas devem ser usadas por serviços do Render na mesma região. Para executar a preparação do banco a partir do computador local, configure `DATABASE_URL` com a External Database URL do PostgreSQL.
+
+`DATABASE_URL` aceita as opções PostgreSQL na própria URL, como `sslmode=require`. Credenciais com caracteres especiais precisam estar codificadas na URL. O timeout de conexão padrão é de 10 segundos. Sem `DATABASE_URL`, SQLite só é permitido com `DJANGO_DEBUG=True`. Em produção, a ausência de `DATABASE_URL` ou `REDIS_URL` impede a inicialização.
+
+Defina o Root Directory como `Backend`, o Build Command como `pip install -r requirements.txt` e o Start Command como:
+
+```sh
+daphne -b 0.0.0.0 -p $PORT --proxy-headers --proxy-headers-host CF-Connecting-IP config.asgi:application
+```
+
+O [Render recomenda `CF-Connecting-IP` para identificar o visitante](https://render.com/articles/host-pocketbase-on-render), pois esse cabeçalho é sobrescrito pela Cloudflare nos web services públicos. O Daphne usa esse IP nas cotas HTTP e WebSocket e reconhece o protocolo HTTPS encaminhado pelo proxy.
+
+As origens permitidas do WebSocket usam `DJANGO_CORS_ALLOWED_ORIGINS` por padrão; `CHAT_WEBSOCKET_ALLOWED_ORIGINS` permite defini-las separadamente. Mantenha o Health Check Path vazio para usar a verificação TCP: as rotas atuais exigem autenticação ou POST.
+
+Execute a sequência de preparação do banco acima apenas depois de configurar o PostgreSQL. Crie também um superusuário ativo com `python manage.py createsuperuser` para habilitar o atendimento. Esses comandos não são executados automaticamente pela configuração.
+
 ## Autenticação e tipos
 
 Cadastro e login, inclusive pelo Google, são públicos. Os demais endpoints exigem o token retornado pelo login. Cookies de sessão não substituem esse token na API.

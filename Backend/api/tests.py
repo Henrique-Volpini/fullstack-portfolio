@@ -1,6 +1,8 @@
 import asyncio
 import bz2
 import json
+import os
+import runpy
 import uuid
 import zlib
 from base64 import b64encode, urlsafe_b64decode, urlsafe_b64encode
@@ -8,13 +10,15 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone as datetime_timezone
 from email.utils import formatdate
+from pathlib import Path
 from threading import Barrier, Event, Lock
 from time import time
 from types import SimpleNamespace
 from unittest import addModuleCleanup
 from unittest.mock import AsyncMock, Mock, patch
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
+from asgiref.testing import ApplicationCommunicator
 from channels.db import database_sync_to_async
 from channels.layers import get_channel_layer
 from channels.testing import WebsocketCommunicator
@@ -23,6 +27,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
 from django.db import (
     IntegrityError, OperationalError, close_old_connections, connection, transaction,
@@ -58,6 +63,146 @@ def setUpModule():
     )
     transporte.start()
     addModuleCleanup(transporte.stop)
+
+
+# Valida a configuração de publicação sem carregar credenciais ou abrir conexões.
+class ConfiguracaoProducaoTests(SimpleTestCase):
+    # Carrega os settings com um ambiente fictício independente do arquivo .env.
+    def carregar_configuracao(self, **variaveis):
+        ambiente = {"DJANGO_SECRET_KEY": "chave-ficticia-exclusiva-dos-testes"}
+        ambiente.update(variaveis)
+        caminho = Path(__file__).resolve().parent.parent / "config" / "settings.py"
+        with patch.dict(os.environ, ambiente, clear=True), patch("dotenv.load_dotenv"):
+            return runpy.run_path(str(caminho))
+
+    # Preserva credenciais codificadas e opções de conexão sem sobrepor o banco de testes.
+    def test_postgresql_decodifica_credenciais_e_preserva_opcoes(self):
+        senha = "senha:@/?#% segura+"
+        url = (
+            f"postgresql://usuario%2Bapi:{quote(senha, safe='')}@banco.example:5433/portfolio"
+            "?sslmode=require&connect_timeout=7&application_name=portfolio"
+        )
+        configuracao = self.carregar_configuracao(
+            DATABASE_URL=url, REDIS_URL="redis://cache.example:6379/0",
+        )
+        banco = configuracao["DATABASES"]["default"]
+        self.assertEqual(banco["ENGINE"], "django.db.backends.postgresql")
+        self.assertEqual(banco["NAME"], "portfolio")
+        self.assertEqual(banco["USER"], "usuario+api")
+        self.assertEqual(banco["PASSWORD"], senha)
+        self.assertEqual(banco["HOST"], "banco.example")
+        self.assertEqual(str(banco["PORT"]), "5433")
+        self.assertEqual(banco["OPTIONS"]["sslmode"], "require")
+        self.assertEqual(int(banco["OPTIONS"]["connect_timeout"]), 7)
+        self.assertEqual(banco["OPTIONS"]["application_name"], "portfolio")
+        self.assertNotIn("dbname", banco["OPTIONS"])
+        self.assertEqual(banco.get("CONN_MAX_AGE", 0), 0)
+
+    # Mantém um limite de conexão quando a URL não define um prazo próprio.
+    def test_postgresql_tem_timeout_e_nao_reutiliza_conexoes_asgi(self):
+        configuracao = self.carregar_configuracao(
+            DATABASE_URL="postgresql://usuario:senha@banco.example/portfolio",
+            REDIS_URL="redis://cache.example:6379/0",
+        )
+        banco = configuracao["DATABASES"]["default"]
+        self.assertEqual(int(banco["OPTIONS"]["connect_timeout"]), 10)
+        self.assertEqual(banco.get("CONN_MAX_AGE", 0), 0)
+
+    # A URL explícita continua usando PostgreSQL durante o desenvolvimento.
+    def test_debug_com_database_url_nao_troca_postgresql_por_sqlite(self):
+        configuracao = self.carregar_configuracao(
+            DJANGO_DEBUG="True",
+            DATABASE_URL="postgresql://usuario:senha@banco.example/portfolio",
+        )
+        self.assertEqual(
+            configuracao["DATABASES"]["default"]["ENGINE"],
+            "django.db.backends.postgresql",
+        )
+
+    # Permite o banco local e o transporte em memória somente no desenvolvimento.
+    def test_debug_sem_urls_preserva_sqlite_e_chat_em_memoria(self):
+        configuracao = self.carregar_configuracao(DJANGO_DEBUG="True")
+        banco = configuracao["DATABASES"]["default"]
+        self.assertEqual(banco["ENGINE"], "django.db.backends.sqlite3")
+        self.assertEqual(banco["NAME"], configuracao["BASE_DIR"] / "db.sqlite3")
+        self.assertEqual(
+            configuracao["CHANNEL_LAYERS"]["default"]["BACKEND"],
+            "channels.layers.InMemoryChannelLayer",
+        )
+
+    # Evita que a publicação use silenciosamente o SQLite efêmero.
+    def test_producao_sem_database_url_nao_inicia(self):
+        with self.assertRaisesMessage(
+            ImproperlyConfigured,
+            "Defina DATABASE_URL para conectar ao PostgreSQL em produção.",
+        ):
+            self.carregar_configuracao(REDIS_URL="redis://cache.example:6379/0")
+
+    # Uma URL malformada ou sem banco não expõe a senha no erro de configuração.
+    def test_database_url_invalida_ou_sem_banco_e_rejeitada_sem_vazar_senha(self):
+        senha = "segredo-de-conexao-nao-deve-aparecer"
+        urls = (
+            f"mysql://usuario:{senha}@banco.example/portfolio",
+            f"postgresql://usuario:{senha}@banco.example/",
+            f"postgresql://usuario:{senha}@banco.example/portfolio?opcao_inexistente=1",
+        )
+        for url in urls:
+            with self.subTest(url=url):
+                with self.assertRaises(ImproperlyConfigured) as erro:
+                    self.carregar_configuracao(
+                        DATABASE_URL=url, REDIS_URL="redis://cache.example:6379/0",
+                    )
+                self.assertEqual(
+                    str(erro.exception),
+                    "DATABASE_URL deve informar uma conexão PostgreSQL válida com o nome do banco.",
+                )
+                self.assertNotIn(senha, str(erro.exception))
+                self.assertNotIn(url, str(erro.exception))
+
+    # Evita que o chat de produção tente acessar um Redis inexistente no próprio servidor.
+    def test_producao_sem_redis_url_nao_inicia(self):
+        with self.assertRaisesMessage(
+            ImproperlyConfigured,
+            "Defina REDIS_URL para habilitar o chat em produção.",
+        ):
+            self.carregar_configuracao(
+                DATABASE_URL="postgresql://usuario:senha@banco.example/portfolio",
+            )
+
+    # Reconhece o domínio e o HTTPS do proxy Render sem perder hosts explícitos.
+    def test_render_adiciona_host_e_configura_https_e_cookies_seguros(self):
+        configuracao = self.carregar_configuracao(
+            RENDER="true",
+            RENDER_EXTERNAL_HOSTNAME="portfolio-api.onrender.com",
+            DJANGO_ALLOWED_HOSTS=" api.example , outro.example ",
+            DJANGO_CORS_ALLOWED_ORIGINS="https://portfolio.example",
+            DATABASE_URL="postgresql://usuario:senha@banco.example/portfolio",
+            REDIS_URL="redis://cache.example:6379/0",
+        )
+        self.assertIn("portfolio-api.onrender.com", configuracao["ALLOWED_HOSTS"])
+        self.assertIn("api.example", configuracao["ALLOWED_HOSTS"])
+        self.assertIn("outro.example", configuracao["ALLOWED_HOSTS"])
+        self.assertEqual(
+            configuracao["SECURE_PROXY_SSL_HEADER"], ("HTTP_X_FORWARDED_PROTO", "https"),
+        )
+        self.assertTrue(configuracao["SECURE_SSL_REDIRECT"])
+        self.assertTrue(configuracao["SESSION_COOKIE_SECURE"])
+        self.assertTrue(configuracao["CSRF_COOKIE_SECURE"])
+        with self.settings(
+            ALLOWED_HOSTS=configuracao["ALLOWED_HOSTS"],
+            CORS_ALLOWED_ORIGINS=configuracao["CORS_ALLOWED_ORIGINS"],
+            SECURE_PROXY_SSL_HEADER=configuracao["SECURE_PROXY_SSL_HEADER"],
+            SECURE_SSL_REDIRECT=configuracao["SECURE_SSL_REDIRECT"],
+        ):
+            resposta = self.client.get(
+                "/chat/", HTTP_HOST="portfolio-api.onrender.com",
+                HTTP_X_FORWARDED_PROTO="https", HTTP_ORIGIN="https://portfolio.example",
+            )
+            self.assertEqual(resposta.status_code, 401)
+            self.assertEqual(resposta["Access-Control-Allow-Origin"], "https://portfolio.example")
+            redirecionamento = self.client.get("/chat/", HTTP_HOST="portfolio-api.onrender.com")
+            self.assertEqual(redirecionamento.status_code, 301)
+            self.assertEqual(redirecionamento["Location"], "https://portfolio-api.onrender.com/chat/")
 
 
 # Verifica o isolamento dos serviços externos durante os testes.
@@ -2341,6 +2486,12 @@ class ChatConcorrenciaTests(DadosChatMixin, TransactionTestCase):
         self.assertEqual(Mensagem.objects.count(), 4)
 
 
+# TransactionTestCase permite a limpeza real que o comunicador do Channels suprime.
+class ChatWebsocketCommunicator(WebsocketCommunicator):
+    send_input = ApplicationCommunicator.send_input
+    receive_output = ApplicationCommunicator.receive_output
+
+
 # Verifica autenticação, eventos e privacidade nas conexões WebSocket.
 @override_settings(**CONFIG_TESTES)
 class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
@@ -2357,7 +2508,7 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
         # Conecta um WebSocket e confere a autenticação opcional com o token.
         async def conectar(token=None, origem=b"http://localhost:5173", caminho="/ws/chat/", aceita=True):
             headers = [(b"origin", origem)] if origem is not None else []
-            socket = WebsocketCommunicator(application, caminho, headers=headers)
+            socket = ChatWebsocketCommunicator(application, caminho, headers=headers)
             abertas.append(socket)
             conectou, _ = await socket.connect()
             self.assertEqual(conectou, aceita)
