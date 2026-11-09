@@ -154,7 +154,8 @@ CHANNEL_LAYERS = {
             "hosts": [{
                 "address": REDIS_URL or "redis://127.0.0.1:6379/0",
                 "socket_connect_timeout": 2,
-                "socket_timeout": 2,
+                # O Channels controla o prazo de sua leitura bloqueante.
+                "socket_timeout": None,
             }],
             "prefix": "portfolio-chat",
         },

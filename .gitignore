@@ -3,7 +3,6 @@
 __pycache__/
 *.py[cod]
 db.sqlite3
-/Backend/api/migrations/
 
 # Environment variables and secrets
 .env

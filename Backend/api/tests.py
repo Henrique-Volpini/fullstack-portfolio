@@ -169,6 +169,20 @@ class ConfiguracaoProducaoTests(SimpleTestCase):
                 DATABASE_URL="postgresql://usuario:senha@banco.example/portfolio",
             )
 
+    # A leitura bloqueante do chat não deve expirar antes de o Redis responder.
+    def test_redis_preserva_leitura_bloqueante_e_limita_apenas_conexao(self):
+        from channels_redis.core import RedisChannelLayer
+
+        configuracao = self.carregar_configuracao(
+            DATABASE_URL="postgresql://usuario:senha@banco.example/portfolio",
+            REDIS_URL="redis://cache.example:6379/0",
+        )
+        camada = RedisChannelLayer(**configuracao["CHANNEL_LAYERS"]["default"]["CONFIG"])
+        pool = camada.create_pool(0)
+        conexao = pool.connection_class(**pool.connection_kwargs)
+        self.assertEqual(conexao.socket_connect_timeout, 2)
+        self.assertIsNone(conexao.socket_timeout)
+
     # Reconhece o domínio e o HTTPS do proxy Render sem perder hosts explícitos.
     def test_render_adiciona_host_e_configura_https_e_cookies_seguros(self):
         configuracao = self.carregar_configuracao(

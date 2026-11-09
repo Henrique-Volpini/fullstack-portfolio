@@ -2,7 +2,9 @@
 
 Os caminhos são relativos ao backend. No desenvolvimento, a base é `http://localhost:8000`. O prefixo `/api` usado pelo proxy do frontend não faz parte dessas rotas. IDs, datas e tokens deste documento são exemplos.
 
-Como as migrations são mantidas apenas localmente, prepare um banco novo executando, nesta ordem, dentro de `Backend/`: `python manage.py makemigrations api`, `python manage.py migrate` e `python manage.py createcachetable`. O último comando cria a tabela usada pelos limites de requisições.
+As migrations acompanham o código em `api/migrations/` e devem ser enviadas ao Git junto com as alterações dos models. Para preparar um banco novo, execute dentro de `Backend/`: `python manage.py migrate` e `python manage.py createcachetable`. O último comando cria a tabela usada pelos limites de requisições.
+
+Ao alterar os models, gere a próxima migration localmente com `python manage.py makemigrations api`, revise o arquivo e envie-o com o código. Preserve as migrations anteriores: o banco registra as já aplicadas e `migrate` executa apenas as pendentes. Não gere migrations durante o deploy.
 
 ## Configuração para o Render
 
@@ -22,7 +24,13 @@ As URLs internas devem ser usadas por serviços do Render na mesma região. Para
 
 `DATABASE_URL` aceita as opções PostgreSQL na própria URL, como `sslmode=require`. Credenciais com caracteres especiais precisam estar codificadas na URL. O timeout de conexão padrão é de 10 segundos. Sem `DATABASE_URL`, SQLite só é permitido com `DJANGO_DEBUG=True`. Em produção, a ausência de `DATABASE_URL` ou `REDIS_URL` impede a inicialização.
 
-Defina o Root Directory como `Backend`, o Build Command como `pip install -r requirements.txt` e o Start Command como:
+Defina o Root Directory como `Backend` e o Build Command como:
+
+```sh
+pip install -r requirements.txt && python manage.py makemigrations --check --dry-run && python manage.py migrate --noinput && python manage.py createcachetable
+```
+
+A verificação interrompe o build se houver alteração nos models sem uma migration correspondente. Em seguida, o deploy aplica apenas as migrations pendentes e garante a tabela de cache. Use o Start Command:
 
 ```sh
 daphne -b 0.0.0.0 -p $PORT --proxy-headers --proxy-headers-host CF-Connecting-IP config.asgi:application
@@ -32,7 +40,9 @@ O [Render recomenda `CF-Connecting-IP` para identificar o visitante](https://ren
 
 As origens permitidas do WebSocket usam `DJANGO_CORS_ALLOWED_ORIGINS` por padrão; `CHAT_WEBSOCKET_ALLOWED_ORIGINS` permite defini-las separadamente. Mantenha o Health Check Path vazio para usar a verificação TCP: as rotas atuais exigem autenticação ou POST.
 
-Execute a sequência de preparação do banco acima apenas depois de configurar o PostgreSQL. Crie também um superusuário ativo com `python manage.py createsuperuser` para habilitar o atendimento. Esses comandos não são executados automaticamente pela configuração.
+Configure o PostgreSQL antes do primeiro deploy. Crie também um superusuário ativo com `python manage.py createsuperuser` para habilitar o atendimento; a criação dessa conta é manual.
+
+Para incorporar um banco já criado pelo antigo build com `makemigrations api`, confira o commit e os logs de Build do primeiro deploy. A migration inicial versionada precisa representar os mesmos models e manter o nome registrado em `django_migrations`. Antes da troca, confira `python manage.py showmigrations api --plan` e `python manage.py migrate --plan` usando esse banco. Se o histórico ou o schema não corresponder, investigue a diferença antes de executar `migrate`; não apague o histórico nem use `--fake` para contornar o problema.
 
 ## Autenticação e tipos
 
@@ -160,7 +170,7 @@ Dados ausentes/inválidos retornam `400`. O limite geral do endpoint também pod
 
 Autentica uma conta Google e cria seu perfil local no primeiro acesso. Configure `GOOGLE_CLIENT_ID` no `Backend/.env` com o Client ID do aplicativo Web autorizado no Google. Não exige Client Secret nem endpoint de callback no backend: o cliente recebe o ID token do Google e o envia nesta requisição.
 
-Após atualizar o backend, execute `python manage.py makemigrations api` e `python manage.py migrate` para criar o vínculo `ContaGoogle` e o registro `CredencialGoogleUtilizada` no banco, seguindo a preparação descrita no início deste documento.
+As migrations versionadas criam o vínculo `ContaGoogle` e o registro `CredencialGoogleUtilizada`. Após atualizar o backend, execute `python manage.py migrate`, seguindo a preparação descrita no início deste documento.
 
 Aceita somente `Content-Type: application/json`.
 
