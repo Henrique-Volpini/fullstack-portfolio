@@ -14,6 +14,20 @@ type AuthNotice = { type: "error" | "warning"; message: string };
 
 const TOKEN_STORAGE_KEY = "portfolio.chat.token";
 const MAX_GOOGLE_CREDENTIAL_LENGTH = 8192;
+const HEALTH_TIMEOUT_MS = 10000;
+const HEALTH_RETRY_MS = 30000;
+const HEALTH_MIN_NOTICE_MS = 1200;
+
+// Consulta o /health/ e diz se o servidor respondeu ok; qualquer falha conta como fora do ar.
+async function checkServerHealth(signal: AbortSignal): Promise<boolean> {
+  try {
+    const response = await fetch(`${apiUrl}/health/`, { credentials: "omit", signal });
+    const data: unknown = await response.json().catch(() => null);
+    return response.ok && !!data && typeof data === "object" && "status" in data && data.status === "ok";
+  } catch {
+    return false;
+  }
+}
 
 // Lê o token de acesso salvo na sessionStorage, ou null se indisponível.
 function readStoredToken(): string | null {
@@ -124,6 +138,7 @@ function AuthPanel() {
   const [accessToken, setAccessToken] = useState<string | null>(readStoredToken);
   const [minimized, setMinimized] = useState(() => window.matchMedia("(max-width: 680px)").matches);
   const [expired, setExpired] = useState(false);
+  const [serverOk, setServerOk] = useState(false);
   const openButton = useRef<HTMLButtonElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLElement>(null);
@@ -139,6 +154,49 @@ function AuthPanel() {
     request.current?.abort();
     request.current = null;
   }, []);
+
+  // Ao entrar no site consulta o /health/, com prazo de 10 s; sem ok, tenta de novo a cada 30 s e para no primeiro ok.
+  useEffect(() => {
+    const startedAt = performance.now();
+    let stopped = false;
+    let controller: AbortController | null = null;
+    let timer = 0;
+
+    const check = async () => {
+      const attempt = new AbortController();
+      controller = attempt;
+      const timeout = window.setTimeout(() => attempt.abort(), HEALTH_TIMEOUT_MS);
+      const ok = await checkServerHealth(attempt.signal);
+      window.clearTimeout(timeout);
+      if (stopped) return;
+      // O aviso fica ao menos 1,2 s, para a animação do ok não se perder na entrada da página.
+      timer = ok
+        ? window.setTimeout(() => setServerOk(true), Math.max(0, startedAt + HEALTH_MIN_NOTICE_MS - performance.now()))
+        : window.setTimeout(check, HEALTH_RETRY_MS);
+    };
+
+    void check();
+    return () => {
+      stopped = true;
+      controller?.abort();
+      window.clearTimeout(timer);
+    };
+  }, []);
+
+  // No ok do servidor, o painel fechado e deslogado dá um salto para convidar o visitante a testar.
+  useEffect(() => {
+    const element = panel.current;
+    if (!serverOk || !element || element.dataset.open === "true" || element.dataset.auth === "true") return;
+    element.animate(
+      [
+        { transform: "translateY(0)", easing: "cubic-bezier(0.2, 0.7, 0.3, 1)" },
+        { transform: "translateY(-14px)", offset: 0.38, easing: "cubic-bezier(0.5, 0, 0.75, 0.4)" },
+        { transform: "translateY(3px)", offset: 0.72, easing: "cubic-bezier(0.25, 0.6, 0.4, 1)" },
+        { transform: "translateY(0)" },
+      ],
+      { duration: 820 },
+    );
+  }, [serverOk]);
 
   useEffect(() => {
     // O botão Sair some junto com o chat; sem levar o foco ao diálogo, Esc e Tab deixam de funcionar.
@@ -458,6 +516,7 @@ function AuthPanel() {
         data-pending={isSubmitting}
         data-auth={isAuthenticated}
         data-minimized={isAuthenticated && !isOpen && minimized}
+        data-server={serverOk ? "ok" : "down"}
         role={isOpen ? "dialog" : isAuthenticated ? "complementary" : undefined}
         aria-modal={isOpen ? true : undefined}
         aria-labelledby={isOpen && !isAuthenticated ? "auth-title" : undefined}
@@ -483,15 +542,22 @@ function AuthPanel() {
             <div className="auth-panel-preview" aria-hidden={isOpen} inert={isOpen}>
               <span className="auth-panel-label">{texts.auth.preview.label}</span>
               <div className="auth-panel-preview-content">
-                <h2>{expired ? texts.auth.preview.expired : texts.auth.preview.invite}</h2>
+                <h2>
+                  {!serverOk ? texts.auth.preview.serverDown
+                    : expired ? texts.auth.preview.expired
+                      : texts.auth.preview.serverOk}
+                </h2>
               </div>
+              {/* Desativado até o /health/ responder ok; no celular, fora do ar, o texto avisa a atualização. */}
               <button
                 className="auth-panel-open"
                 type="button"
+                disabled={!serverOk}
                 onClick={openPanel}
                 ref={openButton}
               >
-                {texts.auth.preview.open}
+                <span className="auth-panel-open-label">{texts.auth.preview.open}</span>
+                <span className="auth-panel-open-down">{texts.auth.preview.serverDownButton}</span>
               </button>
             </div>
 

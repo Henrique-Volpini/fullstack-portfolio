@@ -238,9 +238,12 @@ export const texts = {
     miniPanelLabel: "Conversa",
     preview: {
       label: "CONVERSA",
-      invite: "Faça login para conversar com o Henrique.",
       expired: "Sua sessão expirou. Entre de novo para continuar.",
       open: "Criar conta / Login",
+      // Situação do servidor segundo o /health/.
+      serverDown: "Servidor está sendo atualizado.",
+      serverDownButton: "Servidor em atualização",
+      serverOk: "Venha testar nossa API! Temos chat com o proprietário e com o Assistente de IA.",
     },
     dialogLabel: "ACESSO",
     close: "Fechar janela de login e cadastro",
