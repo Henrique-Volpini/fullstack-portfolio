@@ -13,6 +13,7 @@ import {
 } from "react";
 import { encerrarSessao, type Conversa, type Destinatario, type Perfil } from "./chatApi";
 import { ChatStore, inboxItems, totalUnread, type Filtro, type Thread, type UiMessage } from "./chatStore";
+import { texts } from "../../texts";
 import "./Chat.css";
 
 // Propriedades do chat: token, modo (mini ou tela cheia) e callbacks do painel.
@@ -33,8 +34,8 @@ type Row =
   | { kind: "message"; key: string; message: UiMessage; mine: boolean; first: boolean; seen: boolean; index: number };
 
 const MAX_LENGTH = 4000;
-const timeFormat = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
-const shortDayFormat = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short" });
+const timeFormat = new Intl.DateTimeFormat(texts.locale, { hour: "2-digit", minute: "2-digit" });
+const shortDayFormat = new Intl.DateTimeFormat(texts.locale, { day: "2-digit", month: "short" });
 
 // Hook que cria a ChatStore, inscreve o componente nas mudanças e controla o início e o fim da conexão.
 function useChatStore(token: string, onSessionExpired: () => void) {
@@ -67,8 +68,8 @@ function dayLabel(iso: string): string {
   const date = new Date(iso);
   const now = new Date();
   const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-  if (dayKey(iso) === dayKey(now.toISOString())) return "Hoje";
-  if (dayKey(iso) === dayKey(yesterday.toISOString())) return "Ontem";
+  if (dayKey(iso) === dayKey(now.toISOString())) return texts.chat.today;
+  if (dayKey(iso) === dayKey(yesterday.toISOString())) return texts.chat.yesterday;
   return shortDayFormat.format(date).replace(".", "");
 }
 
@@ -179,7 +180,7 @@ function IconSend() {
 
 // Indicador do estado da conexão: ao vivo, conectando ou atualizando por consulta.
 function LinkStatus({ link }: { link: "connecting" | "live" | "polling" }) {
-  const label = link === "live" ? "Ao vivo" : link === "connecting" ? "Conectando" : "Atualizando";
+  const label = texts.chat.link[link];
   return <span className="chat-link" data-link={link} role="img" aria-label={label} title={label} />;
 }
 
@@ -212,7 +213,7 @@ function Tabs<T extends string>({
         >
           {item.label}
           {item.badge ? (
-            <span className="chat-dot" aria-label={`${item.badge} não lidas`}>
+            <span className="chat-dot" aria-label={texts.chat.unread(item.badge)}>
               {item.badge > 9 ? "9+" : item.badge}
             </span>
           ) : null}
@@ -281,7 +282,7 @@ function Composer({
           value={value}
           maxLength={MAX_LENGTH}
           placeholder={placeholder}
-          aria-label="Mensagem"
+          aria-label={texts.chat.messageLabel}
           disabled={disabled}
           data-autofocus=""
           onChange={(event) => onChange(event.target.value)}
@@ -297,7 +298,7 @@ function Composer({
         className="chat-send"
         type="submit"
         disabled={disabled || !value.trim()}
-        aria-label="Enviar mensagem"
+        aria-label={texts.chat.send}
         onMouseDown={(event) => event.preventDefault()}
       >
         <IconSend />
@@ -342,22 +343,22 @@ function MessageRow({
       {/* Aviso de envio em andamento. */}
       {message.status === "enviando" && (
         <span className="chat-state" role="status">
-          {awaitingAssistant ? "Assistente respondendo…" : "Enviando…"}
+          {awaitingAssistant ? texts.chat.assistantReplying : texts.chat.sending}
         </span>
       )}
       {/* Falha no envio, com opção de tentar de novo ou descartar. */}
       {message.status === "falhou" && (
         <span className="chat-state chat-state-error" role="alert">
-          <span>{message.erro ?? "Não enviada."}</span>
+          <span>{message.erro ?? texts.chat.notSent}</span>
           <button type="button" onClick={() => onRetry(message.id_cliente)}>
-            Tentar de novo
+            {texts.chat.retryMessage}
           </button>
           <button type="button" onClick={() => onDiscard(message.id_cliente)}>
-            Descartar
+            {texts.chat.discard}
           </button>
         </span>
       )}
-      {seen && !message.status && <span className="chat-state">Visto</span>}
+      {seen && !message.status && <span className="chat-state">{texts.chat.seen}</span>}
     </div>
   );
 }
@@ -469,13 +470,13 @@ function ThreadView({
   };
 
   return (
-    <section className="chat-thread" aria-label={`Conversa com ${recipientName}`}>
+    <section className="chat-thread" aria-label={texts.chat.threadLabel(recipientName)}>
       {/* Cabeçalho com botão voltar, nome do visitante e destinatário (visão do operador). */}
       {onBack && (
         <div className="chat-thread-head">
-          <button className="chat-back" type="button" onClick={onBack} aria-label="Voltar para a caixa de entrada">
+          <button className="chat-back" type="button" onClick={onBack} aria-label={texts.chat.backLabel}>
             <IconBack />
-            <span>Caixa de entrada</span>
+            <span>{texts.chat.inbox}</span>
           </button>
           <span className="chat-thread-name">{conversation?.usuario.username ?? recipientName}</span>
           {conversation && <span className="chat-tag">{conversation.nome_destinatario}</span>}
@@ -494,10 +495,7 @@ function ThreadView({
       >
         {/* Aviso de que o assistente ainda não responde sozinho. */}
         {assistantNote && (
-          <p className="chat-note">
-            O Assistente ainda não responde sozinho. Sua mensagem fica registrada e o Henrique pode
-            responder por aqui.
-          </p>
+          <p className="chat-note">{texts.chat.assistantNote}</p>
         )}
 
         {/* Erro ao abrir a caixa de entrada, com botão para tentar de novo. */}
@@ -505,7 +503,7 @@ function ThreadView({
           <div className="chat-state-box" role="alert">
             <p>{inboxError}</p>
             <button type="button" onClick={onRetryInbox}>
-              TENTAR DE NOVO
+              {texts.chat.retry}
             </button>
           </div>
         )}
@@ -518,7 +516,7 @@ function ThreadView({
           <div className="chat-state-box" role="alert">
             <p>{thread.error}</p>
             <button type="button" onClick={() => void store.ensureThread(conversationId)}>
-              TENTAR DE NOVO
+              {texts.chat.retry}
             </button>
           </div>
         )}
@@ -526,16 +524,16 @@ function ThreadView({
         {/* Botão para carregar as mensagens anteriores. */}
         {ready && thread.olderNext && (
           <button className="chat-older" type="button" onClick={loadOlder} disabled={thread.loadingOlder}>
-            {thread.loadingOlder ? "Carregando…" : "Mensagens anteriores"}
+            {thread.loadingOlder ? texts.chat.loading : texts.chat.olderMessages}
           </button>
         )}
 
         {/* Conversa ainda sem mensagens. */}
         {ready && rows.length === 0 && (
           <div className="chat-empty">
-            <p>Nenhuma mensagem ainda.</p>
+            <p>{texts.chat.empty}</p>
             <p className="chat-empty-hint">
-              {operator ? "Aguardando a primeira mensagem." : `Diga olá para ${recipientName}.`}
+              {operator ? texts.chat.emptyOperatorHint : texts.chat.emptyVisitorHint(recipientName)}
             </p>
           </div>
         )}
@@ -561,15 +559,15 @@ function ThreadView({
       {/* Botão para voltar às mensagens mais recentes. */}
       {!atBottom && rows.length > 0 && (
         <button className="chat-jump" type="button" onClick={jumpToEnd}>
-          Mais recentes <span aria-hidden="true">↓</span>
+          {texts.chat.jumpToLatest} <span aria-hidden="true">↓</span>
         </button>
       )}
 
-      {operator && <p className="chat-hint">Respondendo como Henrique</p>}
+      {operator && <p className="chat-hint">{texts.chat.operatorHint}</p>}
       <Composer
         value={draft}
         disabled={!ready}
-        placeholder={operator ? "Escreva uma resposta" : `Mensagem para ${recipientName}`}
+        placeholder={operator ? texts.chat.replyPlaceholder : texts.chat.messagePlaceholder(recipientName)}
         onChange={onDraft}
         onSend={send}
       />
@@ -605,7 +603,7 @@ function ConversationList({
       <div className="chat-state-box" role="alert">
         <p>{error}</p>
         <button type="button" onClick={onRetry}>
-          TENTAR DE NOVO
+          {texts.chat.retry}
         </button>
       </div>
     );
@@ -617,8 +615,8 @@ function ConversationList({
     ) : (
       // Lista vazia, com dica de onde as mensagens aparecem.
       <div className="chat-empty">
-        <p>Nenhuma conversa por aqui.</p>
-        <p className="chat-empty-hint">As mensagens dos visitantes aparecem nesta lista.</p>
+        <p>{texts.chat.noConversations}</p>
+        <p className="chat-empty-hint">{texts.chat.noConversationsHint}</p>
       </div>
     );
   }
@@ -638,13 +636,13 @@ function ConversationList({
                 <time dateTime={item.atualizada_em}>{listTime(item.atualizada_em)}</time>
               </span>
               <span className="chat-list-preview">
-                {fromMe ? (last?.origem === "assistente" ? "Assistente: " : "Você: ") : ""}
+                {fromMe ? (last?.origem === "assistente" ? texts.chat.previewFromAssistant : texts.chat.previewFromMe) : ""}
                 {last?.conteudo}
               </span>
               <span className="chat-list-tags">
                 <span className="chat-tag">{item.nome_destinatario}</span>
                 {item.nao_lidas > 0 && (
-                  <span className="chat-dot" aria-label={`${item.nao_lidas} não lidas`}>
+                  <span className="chat-dot" aria-label={texts.chat.unread(item.nao_lidas)}>
                     {item.nao_lidas > 9 ? "9+" : item.nao_lidas}
                   </span>
                 )}
@@ -657,7 +655,7 @@ function ConversationList({
       {hasMore && (
         <li>
           <button className="chat-older" type="button" onClick={onMore} disabled={loading}>
-            {loading ? "Carregando…" : "Ver mais conversas"}
+            {loading ? texts.chat.loading : texts.chat.moreConversations}
           </button>
         </li>
       )}
@@ -689,26 +687,26 @@ function ChatActions({
         className="chat-icon chat-toggle"
         type="button"
         onClick={onToggleMinimized}
-        aria-label={minimized ? "Restaurar conversa" : "Minimizar conversa"}
+        aria-label={minimized ? texts.chat.restore : texts.chat.minimize}
         aria-expanded={!minimized}
         data-minimized={minimized}
       >
         <IconChevron />
       </button>
-      <button className="chat-icon" type="button" onClick={onExpand} aria-label="Abrir conversa em tela cheia">
+      <button className="chat-icon" type="button" onClick={onExpand} aria-label={texts.chat.expand}>
         <IconExpand />
       </button>
     </>
   ) : (
     <>
       <button className="chat-text-button" type="button" onClick={onLogout} disabled={loggingOut}>
-        {loggingOut ? "SAINDO…" : "SAIR"}
+        {loggingOut ? texts.chat.loggingOut : texts.chat.logout}
       </button>
       <button
         className="chat-icon chat-close"
         type="button"
         onClick={onClose}
-        aria-label="Fechar janela de conversa"
+        aria-label={texts.chat.close}
       >
         <IconClose />
       </button>
@@ -751,9 +749,9 @@ function ChatView({
 
   // Nome exibido do destinatário.
   const nameOf = (id: Destinatario) =>
-    profile?.destinatarios.find((item) => item.id === id)?.nome ?? (id === "henrique" ? "Henrique" : "Assistente");
+    profile?.destinatarios.find((item) => item.id === id)?.nome ?? texts.chat.recipients[id];
   // Nome do destinatário com artigo, para usar em frases.
-  const phraseOf = (id: Destinatario) => `${id === "assistente" ? "o " : ""}${nameOf(id)}`;
+  const phraseOf = (id: Destinatario) => texts.chat.recipientInSentence(id, nameOf(id));
   // Não lidas na conversa com o destinatário.
   const unreadOf = (id: Destinatario) =>
     Object.values(conversations).find((item) => item.destinatario === id)?.nao_lidas ?? 0;
@@ -796,13 +794,13 @@ function ChatView({
 
   const headline = operator
     ? selectedId
-      ? (currentConversation?.usuario.username ?? "Conversa")
-      : "Caixa de entrada."
-    : `Converse com ${phraseOf(inbox)}.`;
+      ? (currentConversation?.usuario.username ?? texts.chat.conversation)
+      : texts.chat.inboxTitle
+    : texts.chat.visitorTitle(phraseOf(inbox));
   const peek = operator
     ? selectedId
-      ? (currentConversation?.usuario.username ?? "Conversa")
-      : "Caixa de entrada"
+      ? (currentConversation?.usuario.username ?? texts.chat.conversation)
+      : texts.chat.inbox
     : nameOf(inbox);
 
   const draftKey = currentId ?? `inbox:${inbox}`;
@@ -822,14 +820,14 @@ function ChatView({
           {minimized ? (
             <span className="chat-peek">{peek}</span>
           ) : (
-            <span className="chat-label">{operator ? "ATENDIMENTO" : "CONVERSA"}</span>
+            <span className="chat-label">{operator ? texts.chat.operatorLabel : texts.chat.label}</span>
           )}
         </div>
 
         {/* Ações: contador de não lidas, minimizar ou expandir, sair ou fechar. */}
         <div className="chat-actions">
           {mode === "mini" && minimized && unread > 0 && (
-            <span className="chat-dot" aria-label={`${unread} não lidas`}>
+            <span className="chat-dot" aria-label={texts.chat.unread(unread)}>
               {unread > 9 ? "9+" : unread}
             </span>
           )}
@@ -860,7 +858,7 @@ function ChatView({
           <div className="chat-state-box" role="alert">
             <p>{state.error}</p>
             <button type="button" onClick={() => store.reload()}>
-              TENTAR DE NOVO
+              {texts.chat.retry}
             </button>
           </div>
         )}
@@ -869,7 +867,7 @@ function ChatView({
         {ready && !operator && (
           <>
             <Tabs
-              label="Escolha com quem conversar"
+              label={texts.chat.recipientTabsLabel}
               value={inbox}
               onChange={setInbox}
               items={[
@@ -898,11 +896,11 @@ function ChatView({
         {ready && operator && !selectedId && (
           <>
             <Tabs
-              label="Filtrar conversas"
+              label={texts.chat.filterLabel}
               value={filter}
               onChange={setFilter}
               items={[
-                { id: "todas", label: "Todas" },
+                { id: "todas", label: texts.chat.filterAll },
                 { id: "henrique", label: nameOf("henrique") },
                 { id: "assistente", label: nameOf("assistente") },
               ]}
@@ -930,7 +928,7 @@ function ChatView({
             conversationId={selectedId}
             thread={state.threads[selectedId]}
             inboxError={undefined}
-            recipientName={currentConversation?.usuario.username ?? "visitante"}
+            recipientName={currentConversation?.usuario.username ?? texts.chat.visitor}
             draft={drafts[draftKey] ?? ""}
             onDraft={(value) => setDrafts((current) => ({ ...current, [draftKey]: value }))}
             onRetryInbox={retryInbox}
@@ -971,7 +969,11 @@ function ChatFailure({
     <div className="chat" data-mode={mode} data-minimized={minimized}>
       <header className="chat-top">
         <div className="chat-id">
-          {minimized ? <span className="chat-peek">Conversa</span> : <span className="chat-label">CONVERSA</span>}
+          {minimized ? (
+            <span className="chat-peek">{texts.chat.conversation}</span>
+          ) : (
+            <span className="chat-label">{texts.chat.label}</span>
+          )}
         </div>
         <div className="chat-actions">
           <ChatActions
@@ -988,11 +990,11 @@ function ChatFailure({
 
       {/* Corpo com o aviso de erro e o botão para montar o chat de novo. */}
       <div className="chat-body" aria-hidden={minimized} inert={minimized}>
-        {mode === "full" && <h2 className="chat-title">Conversa indisponível.</h2>}
+        {mode === "full" && <h2 className="chat-title">{texts.chat.unavailableTitle}</h2>}
         <div className="chat-state-box" role="alert">
-          <p>O chat encontrou um erro inesperado. O restante do site continua funcionando normalmente.</p>
+          <p>{texts.chat.crashed}</p>
           <button type="button" ref={retryButton} onClick={onRetry}>
-            TENTAR DE NOVO
+            {texts.chat.retry}
           </button>
         </div>
       </div>

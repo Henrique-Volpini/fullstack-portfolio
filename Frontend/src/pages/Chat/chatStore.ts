@@ -16,6 +16,7 @@ import {
   type Mensagem,
   type Perfil,
 } from "./chatApi";
+import { texts } from "../../texts";
 
 // Filtro da lista de conversas do operador.
 export type Filtro = "todas" | Destinatario;
@@ -104,7 +105,7 @@ export function totalUnread(state: ChatState): number {
 // Mensagem de erro segura para exibir ao usuário.
 function messageOf(error: unknown): string {
   if (error instanceof ApiError) return error.message;
-  return "Não foi possível concluir a solicitação.";
+  return texts.chat.errors.failed;
 }
 
 // Leituras otimistas em voo: requisições, não lidas de antes da primeira e maior id que falhou.
@@ -335,7 +336,7 @@ export class ChatStore {
       id: 0,
       conversa_id: conversationId,
       remetente: profile.operador
-        ? { id: null, nome: "Henrique" }
+        ? { id: null, nome: texts.chat.recipients.henrique }
         : { id: profile.usuario.id, nome: profile.usuario.username },
       origem: profile.operador ? "henrique" : "usuario",
       conteudo: content,
@@ -774,7 +775,7 @@ export class ChatStore {
         threads[conversationId] = {
           messages: unsent,
           phase: "error",
-          error: "A conversa precisa ser recarregada.",
+          error: texts.chat.errors.needsReload,
           olderNext: null,
           loadingOlder: false,
           syncedId: 0,

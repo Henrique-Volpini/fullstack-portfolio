@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type TransitionEvent } from "react";
+import { Fragment, useEffect, useRef, useState, type KeyboardEvent, type TransitionEvent } from "react";
 import banestesLogo from "../../assets/banestes-logo.png";
 import profilePhoto from "../../assets/perfil-henrique.webp";
+import { texts } from "../../texts";
 import AuthPanel from "../Auth/AuthPanel";
 import CopyLinkButton from "./CopyLinkButton";
 import PrivacyNotice from "./PrivacyNotice";
@@ -21,110 +22,12 @@ type AboutSection = {
   showBanestesLogo?: boolean;
 };
 
-const aboutSections: AboutSection[] = [
-  {
-    id: "profile",
-    label: "Perfil",
-    paragraphs: [
-      "Sou estudante de Ciência da Computação na FAESA e atualmente estagiário no Banestes, onde tenho contato direto com o ambiente de tecnologia e com problemas reais do dia a dia de TI.",
-      "Tenho interesse principalmente em desenvolvimento Full-Stack, trabalhando com Python, Django, Django REST Framework, TypeScript e JavaScript para construir aplicações web e APIs.",
-      "Também utilizo programação para automatizar processos e reduzir tarefas repetitivas, com ferramentas como Python, Power Automate e Excel voltadas à automação e otimização de atividades.",
-      "Além do desenvolvimento web, tenho interesse em arquitetura de software, inteligência artificial, desenvolvimento de jogos e novas tecnologias. Parte do meu aprendizado acontece em projetos pessoais, nos quais estudo ferramentas e transformo ideias em aplicações.",
-    ],
-    details: [
-      { term: "Formação", description: "Ciência da Computação — FAESA" },
-      { term: "Atualmente", description: "Estagiário — Banestes" },
-      { term: "Foco", description: "Desenvolvimento Full-Stack" },
-      { term: "Base", description: "Python / Django / TypeScript" },
-    ],
-  },
-  {
-    id: "education",
-    label: "Formação",
-    paragraphs: [
-      "Ingressei no curso de Ciência da Computação na FAESA no início de 2022 e atualmente estou na etapa final da graduação.",
-      "Ao longo do curso, tive contato com Python e Java e desenvolvi uma base em algoritmos, estruturas de dados, orientação a objetos, bancos de dados e engenharia de software.",
-      "A formação também me apresentou fundamentos de redes, sistemas operacionais e arquitetura de computadores, ajudando a entender como as diferentes partes de um sistema se conectam.",
-      "Procuro levar esses conceitos para a prática em projetos pessoais e no trabalho, usando o desenvolvimento de software como forma de consolidar o aprendizado.",
-    ],
-    details: [
-      { term: "Início", description: "2022" },
-      { term: "Curso", description: "Ciência da Computação" },
-      { term: "Instituição", description: "FAESA" },
-      { term: "Situação", description: "Em fase de conclusão" },
-    ],
-  },
-  {
-    id: "work",
-    label: "Trabalho atual",
-    paragraphs: [
-      "No Banestes, atuo como estagiário de desenvolvimento Full-Stack, utilizando Django como principal ferramenta no dia a dia.",
-      "Trabalho no desenvolvimento de um site de uso interno criado para facilitar a integração entre grupos e tornar o acesso e o uso das informações mais diretos.",
-      "A rotina envolve tanto o backend quanto a interface da aplicação, com uso cotidiano de Django, JavaScript, HTML e CSS.",
-      "Essa experiência me permite aprender a partir de necessidades reais, entender melhor a organização de uma aplicação e buscar formas mais simples de apoiar processos internos com software.",
-    ],
-    details: [
-      { term: "Empresa", description: "Banestes" },
-      { term: "Função", description: "Estagiário de desenvolvimento Full-Stack" },
-      { term: "Principal ferramenta", description: "Django" },
-      { term: "Produto", description: "Aplicação web interna" },
-    ],
-    showBanestesLogo: true,
-  },
-  {
-    id: "focus",
-    label: "Foco",
-    paragraphs: [
-      "Meu foco atual é desenvolvimento Full-Stack: entender o problema, estruturar o backend e construir uma interface clara para quem vai utilizar a aplicação.",
-      "Tenho buscado evoluir principalmente em Python, Django, APIs, TypeScript e arquitetura de software, conectando esses conhecimentos em aplicações completas.",
-      "Também mantenho interesse em automação, inteligência artificial, desenvolvimento de jogos e novas tecnologias como caminhos complementares de estudo.",
-    ],
-    details: [
-      { term: "Área", description: "Desenvolvimento Full-Stack" },
-      { term: "Backend", description: "Python / Django / APIs" },
-      { term: "Frontend", description: "TypeScript / JavaScript" },
-      { term: "Objetivo", description: "Construir aplicações completas" },
-    ],
-  },
-];
-
-const technologies = [
-  {
-    name: "Python",
-    description:
-      "Minha base para backend e automações. Comecei na graduação e continuei praticando no trabalho e em projetos pessoais.",
-  },
-  {
-    name: "Django",
-    description:
-      "Minha principal ferramenta no Banestes, utilizada cotidianamente no desenvolvimento da aplicação web interna.",
-  },
-  {
-    name: "Django REST Framework",
-    description:
-      "Biblioteca escolhida e já instalada neste portfólio para estruturar a API que conectará o backend Django ao frontend.",
-  },
-  {
-    name: "TypeScript",
-    description:
-      "Utilizado no frontend deste portfólio para escrever componentes React com tipos mais seguros.",
-  },
-  {
-    name: "JavaScript",
-    description:
-      "Usado cotidianamente no Banestes para implementar comportamentos e interações na interface da aplicação interna.",
-  },
-  {
-    name: "HTML",
-    description:
-      "Usado cotidianamente no trabalho para estruturar as páginas e organizar o conteúdo da aplicação.",
-  },
-  {
-    name: "CSS",
-    description:
-      "Usado cotidianamente no trabalho para construir layouts, responsividade e a apresentação visual das interfaces.",
-  },
-];
+// Seções do Sobre mim, na ordem das abas; os textos ficam em src/texts.ts.
+const aboutSections: AboutSection[] = (["profile", "education", "work", "focus"] as const).map((id) => ({
+  id,
+  ...texts.about.sections[id],
+  showBanestesLogo: id === "work",
+}));
 
 // Corpo de uma seção do Sobre mim: logo opcional, parágrafos e quadro de detalhes.
 function AboutBody({ section }: { section: AboutSection }) {
@@ -135,12 +38,12 @@ function AboutBody({ section }: { section: AboutSection }) {
         <div className="about-company">
           <img
             src={banestesLogo}
-            alt="Banestes - Banco do Estado do Espírito Santo"
+            alt={texts.about.companyLogoAlt}
             width="805"
             height="823"
             loading="lazy"
           />
-          <span>Experiência atual</span>
+          <span>{texts.about.companyCaption}</span>
         </div>
       )}
 
@@ -314,15 +217,15 @@ function Home() {
     <>
       {/* Cabeçalho fixo com logo e navegação. */}
       <header className="home-header">
-        <nav className="home-nav home-container" aria-label="Navegação principal">
+        <nav className="home-nav home-container" aria-label={texts.header.navLabel}>
           <button
             className="home-logo"
             type="button"
             onClick={() => scrollToSection("inicio")}
-            aria-label="Ir para o início"
+            aria-label={texts.header.logoLabel}
           >
             <span aria-hidden="true">&lt;</span>
-            Henrique Volpini
+            {texts.header.logo}
             <span aria-hidden="true"> /&gt;</span>
           </button>
 
@@ -333,28 +236,28 @@ function Home() {
               type="button"
               onClick={() => scrollToSection("inicio")}
             >
-              Início
+              {texts.header.links.inicio}
             </button>
             <button
               className="home-nav-link"
               type="button"
               onClick={() => scrollToSection("about")}
             >
-              Sobre
+              {texts.header.links.about}
             </button>
             <button
               className="home-nav-link"
               type="button"
               onClick={() => scrollToSection("stack")}
             >
-              Stack
+              {texts.header.links.stack}
             </button>
             <button
               className="home-nav-link"
               type="button"
               onClick={() => scrollToSection("contato")}
             >
-              Contato
+              {texts.header.links.contato}
             </button>
             <ThemeToggle />
           </div>
@@ -372,21 +275,24 @@ function Home() {
         >
           {/* Texto da apresentação. */}
           <div className="hero-content">
-            <span className="hero-eyebrow">Full-stack developer</span>
+            <span className="hero-eyebrow">{texts.hero.eyebrow}</span>
 
             <h1 className="hero-title" id="home-title">
-              <span>Henrique</span>
-              <span className="hero-title-last">Volpini</span>
+              <span>{texts.hero.firstName}</span>
+              <span className="hero-title-last">{texts.hero.lastName}</span>
             </h1>
 
-            <p className="hero-description">
-              Desenvolvendo aplicações web completas, da arquitetura à interface.
-            </p>
+            <p className="hero-description">{texts.hero.description}</p>
 
             <p className="hero-technologies">
-              Django <span aria-hidden="true">·</span> Django REST{" "}
-              <span aria-hidden="true">·</span> TypeScript{" "}
-              <span aria-hidden="true">·</span> Python
+              {/* Repete a divisão de espaços do texto original, para o espaçamento entre as palavras não mudar. */}
+              {texts.hero.technologies.map((technology, index, list) => (
+                <Fragment key={technology}>
+                  {index > 0 && <span aria-hidden="true">·</span>}
+                  {index === 0 ? `${technology} ` : ` ${technology}`}
+                  {index > 0 && index < list.length - 1 && " "}
+                </Fragment>
+              ))}
             </p>
           </div>
 
@@ -396,7 +302,7 @@ function Home() {
               <img
                 className="hero-photo-image"
                 src={profilePhoto}
-                alt="Retrato de Henrique Volpini"
+                alt={texts.hero.photoAlt}
                 width="800"
                 height="800"
               />
@@ -417,12 +323,12 @@ function Home() {
               01
             </span>
             <span className="about-label" aria-hidden="true">
-              About / {currentAbout.label}
+              {texts.about.eyebrow} / {currentAbout.label}
             </span>
-            <h2 id="about-title">Sobre mim</h2>
+            <h2 id="about-title">{texts.about.title}</h2>
 
             {/* Abas dos tópicos, navegáveis pelo teclado. */}
-            <div className="about-tabs" role="tablist" aria-label="Tópicos sobre mim">
+            <div className="about-tabs" role="tablist" aria-label={texts.about.tabsLabel}>
               {aboutSections.map((section, index) => (
                 <button
                   className="about-tab"
@@ -478,12 +384,12 @@ function Home() {
         >
           <div className="section-heading">
             <span aria-hidden="true">02</span>
-            <h2 id="stack-title">Stack</h2>
+            <h2 id="stack-title">{texts.stack.title}</h2>
           </div>
 
           {/* Lista de tecnologias. */}
           <ul className="stack-list">
-            {technologies.map((technology, index) => (
+            {texts.stack.technologies.map((technology, index) => (
               <li
                 className="stack-item"
                 key={technology.name}
@@ -523,32 +429,29 @@ function Home() {
         >
           <div className="section-heading">
             <span aria-hidden="true">03</span>
-            <h2 id="contact-title">Contato</h2>
+            <h2 id="contact-title">{texts.contact.title}</h2>
           </div>
 
           {/* Introdução e lista de contatos lado a lado. */}
           <div className="contact-layout">
             <div className="contact-intro">
-              <p className="contact-eyebrow">Vamos conversar</p>
-              <p className="contact-title">Links diretos, sem formulário.</p>
-              <p className="contact-description">
-                Escolha o canal mais conveniente ou baixe a versão provisória do meu
-                currículo.
-              </p>
+              <p className="contact-eyebrow">{texts.contact.eyebrow}</p>
+              <p className="contact-title">{texts.contact.heading}</p>
+              <p className="contact-description">{texts.contact.description}</p>
             </div>
 
             {/* Links de contato, cada um com botão para copiar. */}
             <ul className="contact-links">
               <li>
-                <CopyLinkButton value="https://github.com/Henrique-Volpini" label="Copiar link do GitHub" />
+                <CopyLinkButton value="https://github.com/Henrique-Volpini" label={texts.contact.github.copy} />
                 <a
                   href="https://github.com/Henrique-Volpini"
                   target="_blank"
                   rel="noopener noreferrer"
-                  aria-label="GitHub de Henrique Volpini (abre em nova aba)"
+                  aria-label={texts.contact.github.label}
                 >
                   <span>
-                    <small>GitHub</small>
+                    <small>{texts.contact.github.kind}</small>
                     Henrique-Volpini
                   </span>
                   <span aria-hidden="true">↗</span>
@@ -557,44 +460,44 @@ function Home() {
               <li>
                 <CopyLinkButton
                   value="https://www.linkedin.com/in/henrique-volpini-gon%C3%A7alves-72aa55366/"
-                  label="Copiar link do LinkedIn"
+                  label={texts.contact.linkedin.copy}
                 />
                 <a
                   href="https://www.linkedin.com/in/henrique-volpini-gon%C3%A7alves-72aa55366/"
                   target="_blank"
                   rel="noopener noreferrer"
-                  aria-label="LinkedIn de Henrique Volpini Gonçalves (abre em nova aba)"
+                  aria-label={texts.contact.linkedin.label}
                 >
                   <span>
-                    <small>LinkedIn</small>
+                    <small>{texts.contact.linkedin.kind}</small>
                     Henrique Volpini Gonçalves
                   </span>
                   <span aria-hidden="true">↗</span>
                 </a>
               </li>
               <li>
-                <CopyLinkButton value="https://wa.me/5527997899584" label="Copiar link do WhatsApp" />
+                <CopyLinkButton value="https://wa.me/5527997899584" label={texts.contact.whatsapp.copy} />
                 <a
                   href="https://wa.me/5527997899584"
                   target="_blank"
                   rel="noopener noreferrer"
-                  aria-label="Conversar com Henrique pelo WhatsApp no número mais 55 27 99789 9584 (abre em nova aba)"
+                  aria-label={texts.contact.whatsapp.label}
                 >
                   <span>
-                    <small>WhatsApp</small>
+                    <small>{texts.contact.whatsapp.kind}</small>
                     +55 27 99789-9584
                   </span>
                   <span aria-hidden="true">↗</span>
                 </a>
               </li>
               <li>
-                <CopyLinkButton value="henriquev.comp@gmail.com" label="Copiar e-mail" />
+                <CopyLinkButton value="henriquev.comp@gmail.com" label={texts.contact.email.copy} />
                 <a
                   href="mailto:henriquev.comp@gmail.com"
-                  aria-label="Enviar e-mail para Henrique em henriquev.comp@gmail.com"
+                  aria-label={texts.contact.email.label}
                 >
                   <span>
-                    <small>E-mail</small>
+                    <small>{texts.contact.email.kind}</small>
                     henriquev.comp@gmail.com
                   </span>
                   <span aria-hidden="true">↗</span>
@@ -603,15 +506,15 @@ function Home() {
               <li>
                 <CopyLinkButton
                   value={new URL(`${import.meta.env.BASE_URL}curriculo-henrique-volpini.pdf`, window.location.origin).href}
-                  label="Copiar link do currículo"
+                  label={texts.contact.resume.copy}
                 />
                 <a
                   href={`${import.meta.env.BASE_URL}curriculo-henrique-volpini.pdf`}
                   download="curriculo-henrique-volpini.pdf"
                 >
                   <span>
-                    <small>Currículo</small>
-                    Baixar PDF
+                    <small>{texts.contact.resume.kind}</small>
+                    {texts.contact.resume.action}
                   </span>
                   <span aria-hidden="true">↓</span>
                 </a>
@@ -622,7 +525,7 @@ function Home() {
 
         {/* Rodapé com direitos autorais e aviso de privacidade. */}
         <footer className="home-footer home-container">
-          <p className="home-footer-note">© {new Date().getFullYear()} Henrique Volpini</p>
+          <p className="home-footer-note">{texts.footer.copyright(new Date().getFullYear())}</p>
           <PrivacyNotice />
         </footer>
       </main>

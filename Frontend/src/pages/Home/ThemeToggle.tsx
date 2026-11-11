@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { flushSync } from "react-dom";
+import { texts } from "../../texts";
 
 const THEMES = [
-  { id: "noite", label: "Azul-noite" },
-  { id: "cianotipo", label: "Cianótipo" },
-  { id: "prancheta", label: "Prancheta" },
-  { id: "anil", label: "Anil" },
+  { id: "noite", label: texts.theme.names.noite },
+  { id: "cianotipo", label: texts.theme.names.cianotipo },
+  { id: "prancheta", label: texts.theme.names.prancheta },
+  { id: "anil", label: texts.theme.names.anil },
 ] as const;
 
 // Identificadores válidos de tema.
@@ -55,8 +56,8 @@ function ThemeToggle() {
       className="home-nav-link theme-toggle"
       type="button"
       onClick={changeTheme}
-      aria-label={`Tema ${current.label}. Mudar para ${next.label}`}
-      title={`Mudar para ${next.label}`}
+      aria-label={texts.theme.label(current.label, next.label)}
+      title={texts.theme.title(next.label)}
     >
       <span
         className="theme-toggle-dot"

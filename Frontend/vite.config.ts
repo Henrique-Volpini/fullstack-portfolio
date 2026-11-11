@@ -1,8 +1,11 @@
 import { createHash } from 'node:crypto'
 import react from '@vitejs/plugin-react'
-import { defineConfig, type Plugin } from 'vite'
+import { defineConfig, type HtmlTagDescriptor, type Plugin } from 'vite'
+import { texts } from './src/texts.ts'
 
 const base = '/'
+const SITE_URL = 'https://henriquevolpini.com.br/'
+const SHARE_IMAGE = 'previa-henrique-volpini.jpg'
 
 // Plugin do Vite: no servidor de desenvolvimento, devolve à página inicial os endereços que não são arquivo nem API.
 const redirectToHome: Plugin = {
@@ -19,6 +22,41 @@ const redirectToHome: Plugin = {
       res.writeHead(302, { Location: base })
       res.end()
     })
+  },
+}
+
+// Escapa os caracteres especiais de um texto colocado dentro do HTML.
+const escapeHtml = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+// Plugin do Vite: preenche no index.html o idioma, o título, a descrição e a prévia de link com os textos de src/texts.ts.
+const siteMeta: Plugin = {
+  name: 'site-meta',
+  transformIndexHtml(html) {
+    if (!html.includes('<html>')) throw new Error('index.html precisa da tag <html> sem atributos para receber o idioma.')
+
+    const { meta } = texts
+    // Monta uma meta tag para o fim do head.
+    const metaTag = (attrs: Record<string, string>): HtmlTagDescriptor => ({ tag: 'meta', attrs, injectTo: 'head' })
+    return {
+      html: html.replace('<html>', `<html lang="${escapeHtml(texts.locale)}">`),
+      tags: [
+        { tag: 'title', children: escapeHtml(meta.title), injectTo: 'head' },
+        metaTag({ name: 'description', content: meta.description }),
+        { tag: 'link', attrs: { rel: 'canonical', href: SITE_URL }, injectTo: 'head' },
+        metaTag({ property: 'og:type', content: 'website' }),
+        metaTag({ property: 'og:site_name', content: meta.title }),
+        metaTag({ property: 'og:locale', content: meta.ogLocale }),
+        metaTag({ property: 'og:url', content: SITE_URL }),
+        metaTag({ property: 'og:title', content: meta.shareTitle }),
+        metaTag({ property: 'og:description', content: meta.description }),
+        metaTag({ property: 'og:image', content: new URL(SHARE_IMAGE, SITE_URL).href }),
+        metaTag({ property: 'og:image:type', content: 'image/jpeg' }),
+        metaTag({ property: 'og:image:width', content: '1200' }),
+        metaTag({ property: 'og:image:height', content: '630' }),
+        metaTag({ property: 'og:image:alt', content: meta.shareImageAlt }),
+        metaTag({ name: 'twitter:card', content: 'summary_large_image' }),
+      ],
+    }
   },
 }
 
@@ -66,7 +104,7 @@ const contentSecurityPolicy: Plugin = {
 }
 
 export default defineConfig({
-  plugins: [react(), redirectToHome, contentSecurityPolicy],
+  plugins: [react(), redirectToHome, siteMeta, contentSecurityPolicy],
   base,
   server: {
     proxy: {

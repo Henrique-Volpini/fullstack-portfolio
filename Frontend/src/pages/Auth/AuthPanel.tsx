@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import Chat from "../Chat/Chat";
 import { apiUrl } from "../Chat/chatApi";
+import { texts } from "../../texts";
 import GoogleSignIn from "./GoogleSignIn";
 import "./AuthPanel.css";
 
@@ -11,7 +12,6 @@ type SubmitState = "idle" | AuthView | "google";
 // Aviso exibido abaixo do formulário.
 type AuthNotice = { type: "error" | "warning"; message: string };
 
-const SESSION_EXPIRED_MESSAGE = "Sua sessão expirou. Entre novamente para continuar.";
 const TOKEN_STORAGE_KEY = "portfolio.chat.token";
 const MAX_GOOGLE_CREDENTIAL_LENGTH = 8192;
 
@@ -39,19 +39,19 @@ function describeGoogleStatus(status: number, data: unknown, retryAfter: string 
     const detail = data && typeof data === "object" && "detail" in data ? data.detail : null;
     return typeof detail === "string" && detail.trim()
       ? detail
-      : "O Google não confirmou seu acesso. Tente novamente.";
+      : texts.auth.google.rejected;
   }
   if (status === 429) {
     const seconds = Number.parseInt(retryAfter ?? "", 10);
     return Number.isFinite(seconds) && seconds > 0
-      ? `Muitas tentativas de login. Tente de novo em ${seconds} s.`
-      : "Muitas tentativas de login. Aguarde um instante e tente de novo.";
+      ? texts.auth.google.tooManyAttemptsIn(seconds)
+      : texts.auth.google.tooManyAttempts;
   }
-  if (status >= 500) return "O login com Google está indisponível no momento. Tente novamente em instantes.";
+  if (status >= 500) return texts.auth.google.unavailable;
   if (status === 400 || status === 415) {
-    return "Não foi possível validar a credencial do Google. Tente novamente.";
+    return texts.auth.google.invalidCredential;
   }
-  return "Não foi possível entrar com o Google. Tente novamente.";
+  return texts.auth.google.failed;
 }
 
 // Envia login, cadastro ou login Google à API e devolve o JSON, traduzindo erros em mensagens.
@@ -76,13 +76,11 @@ async function sendAuthRequest(
     }
 
     if (response.status >= 500) {
-      throw new Error("O servidor está indisponível. Tente novamente em instantes.");
+      throw new Error(texts.auth.serverUnavailable);
     }
 
     const labels: Record<string, string> = {
-      username: "Nome de usuário: ",
-      email: "E-mail: ",
-      password: "Senha: ",
+      ...texts.auth.fieldErrorPrefixes,
       non_field_errors: "",
       erro: "",
       detail: "",
@@ -97,11 +95,11 @@ async function sendAuthRequest(
         })
       : [];
 
-    throw new Error(messages.join(" ") || "Não foi possível concluir a solicitação. Tente novamente.");
+    throw new Error(messages.join(" ") || texts.auth.requestFailed);
   }
 
   if (!result || typeof result !== "object" || Array.isArray(result)) {
-    throw new Error("O servidor retornou uma resposta inválida. Tente novamente.");
+    throw new Error(texts.auth.invalidResponse);
   }
 
   return result as Record<string, unknown>;
@@ -212,7 +210,7 @@ function AuthPanel() {
       window.clearTimeout(focusTimer);
       document.body.style.overflow = previousOverflow;
       page.forEach((element) => element.removeAttribute("inert"));
-      (trigger ?? section?.querySelector<HTMLElement>('[aria-label="Abrir conversa em tela cheia"]'))?.focus();
+      (trigger ?? section?.querySelector<HTMLElement>(`[aria-label="${texts.chat.expand}"]`))?.focus();
     };
   }, [isOpen]);
 
@@ -222,7 +220,7 @@ function AuthPanel() {
     previousPosition.current = panel.current?.getBoundingClientRect() ?? null;
     setView("login");
     setSubmitState("idle");
-    setNotice(expired ? { type: "error", message: SESSION_EXPIRED_MESSAGE } : null);
+    setNotice(expired ? { type: "error", message: texts.auth.sessionExpired } : null);
     setExpired(false);
     setPrefilledUsername("");
     panel.current?.querySelector<HTMLFormElement>("form")?.reset();
@@ -258,7 +256,7 @@ function AuthPanel() {
       setView("login");
       setNotice({
         type: "warning",
-        message: "Você saiu deste navegador, mas o servidor não confirmou a revogação da sessão. Uma cópia do seu token ainda pode funcionar até a sessão expirar.",
+        message: texts.auth.logoutNotConfirmed,
       });
       setIsOpen(true);
     }
@@ -272,7 +270,7 @@ function AuthPanel() {
     setView("login");
     setSubmitState("idle");
     if (isOpen) {
-      setNotice({ type: "error", message: SESSION_EXPIRED_MESSAGE });
+      setNotice({ type: "error", message: texts.auth.sessionExpired });
     } else {
       setExpired(true);
     }
@@ -320,7 +318,7 @@ function AuthPanel() {
   // Guarda o token recebido e abre o chat.
   const acceptLogin = (login: Record<string, unknown>) => {
     if (typeof login.token !== "string" || !login.token.trim()) {
-      throw new Error("O servidor não confirmou o login. Tente novamente.");
+      throw new Error(texts.auth.loginNotConfirmed);
     }
 
     storeToken(login.token);
@@ -337,7 +335,7 @@ function AuthPanel() {
     if (request.current || isAuthenticated || !isOpen) return;
 
     if (!credential || credential.length > MAX_GOOGLE_CREDENTIAL_LENGTH) {
-      setNotice({ type: "error", message: "Não foi possível obter a credencial do Google. Tente novamente." });
+      setNotice({ type: "error", message: texts.auth.google.missingCredential });
       return;
     }
 
@@ -361,10 +359,10 @@ function AuthPanel() {
       setNotice({
         type: "error",
         message: timedOut
-          ? "O servidor demorou para responder. Tente novamente."
+          ? texts.auth.timeout
           : error instanceof TypeError
-            ? "Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente."
-            : error instanceof Error ? error.message : "Não foi possível entrar com o Google.",
+            ? texts.auth.offline
+            : error instanceof Error ? error.message : texts.auth.google.failedShort,
       });
     } finally {
       window.clearTimeout(timeout);
@@ -383,7 +381,7 @@ function AuthPanel() {
     let username = String(fields.get("username") ?? "").trim();
     const password = String(fields.get("password") ?? "");
     if (!username || !password) {
-      setNotice({ type: "error", message: "Preencha o nome de usuário e a senha." });
+      setNotice({ type: "error", message: texts.auth.missingFields });
       return;
     }
 
@@ -418,10 +416,10 @@ function AuthPanel() {
     } catch (error) {
       if (request.current !== controller) return;
       const message = timedOut
-        ? "O servidor demorou para responder. Tente novamente."
+        ? texts.auth.timeout
         : error instanceof TypeError
-          ? "Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente."
-          : error instanceof Error ? error.message : "Não foi possível concluir a solicitação.";
+          ? texts.auth.offline
+          : error instanceof Error ? error.message : texts.auth.requestFailedShort;
 
       setSubmitState("idle");
       if (accountCreated) {
@@ -431,9 +429,9 @@ function AuthPanel() {
       setNotice({
         type: "error",
         message: accountCreated
-          ? `Sua conta foi criada, mas o login automático não foi concluído. ${message} Faça login para continuar.`
+          ? texts.auth.accountCreatedLoginFailed(message)
           : view === "cadastro" && (timedOut || error instanceof TypeError)
-            ? `${message} Se a conta já tiver sido criada, tente fazer login.`
+            ? texts.auth.maybeCreated(message)
             : message,
       });
     } finally {
@@ -463,7 +461,7 @@ function AuthPanel() {
         role={isOpen ? "dialog" : isAuthenticated ? "complementary" : undefined}
         aria-modal={isOpen ? true : undefined}
         aria-labelledby={isOpen && !isAuthenticated ? "auth-title" : undefined}
-        aria-label={isAuthenticated ? (isOpen ? "Chat" : "Conversa") : undefined}
+        aria-label={isAuthenticated ? (isOpen ? texts.auth.panelLabel : texts.auth.miniPanelLabel) : undefined}
         ref={panel}
         onKeyDown={handleKeyDown}
       >
@@ -483,13 +481,9 @@ function AuthPanel() {
           <>
             {/* Prévia do painel fechado, convidando a fazer login. */}
             <div className="auth-panel-preview" aria-hidden={isOpen} inert={isOpen}>
-              <span className="auth-panel-label">CONVERSA</span>
+              <span className="auth-panel-label">{texts.auth.preview.label}</span>
               <div className="auth-panel-preview-content">
-                <h2>
-                  {expired
-                    ? "Sua sessão expirou. Entre de novo para continuar."
-                    : "Faça login para conversar com o Henrique."}
-                </h2>
+                <h2>{expired ? texts.auth.preview.expired : texts.auth.preview.invite}</h2>
               </div>
               <button
                 className="auth-panel-open"
@@ -497,7 +491,7 @@ function AuthPanel() {
                 onClick={openPanel}
                 ref={openButton}
               >
-                Criar conta / Login
+                {texts.auth.preview.open}
               </button>
             </div>
 
@@ -505,11 +499,11 @@ function AuthPanel() {
             <div className="auth-panel-dialog" aria-hidden={!isOpen} inert={!isOpen}>
               {/* Barra superior com o rótulo e o botão de fechar. */}
               <div className="auth-panel-topline">
-                <span>ACESSO</span>
+                <span>{texts.auth.dialogLabel}</span>
                 <button
                   className="auth-panel-close"
                   type="button"
-                  aria-label="Fechar janela de login e cadastro"
+                  aria-label={texts.auth.close}
                   onClick={closePanel}
                   ref={closeButton}
                 >
@@ -521,23 +515,21 @@ function AuthPanel() {
 
               {/* Título e descrição da aba atual. */}
               <div className="auth-panel-heading" key={view}>
-                <h2 id="auth-title">{view === "login" ? "Entre para conversar." : "Crie sua conta."}</h2>
+                <h2 id="auth-title">{view === "login" ? texts.auth.login.title : texts.auth.signup.title}</h2>
                 <p className="auth-panel-description">
-                  {view === "login"
-                    ? "Entre na sua conta para começar a conversa."
-                    : "Escolha um usuário e uma senha para começar."}
+                  {view === "login" ? texts.auth.login.description : texts.auth.signup.description}
                 </p>
               </div>
 
               {/* Abas para alternar entre login e cadastro. */}
-              <div className="auth-panel-tabs" aria-label="Escolha entre login e cadastro">
+              <div className="auth-panel-tabs" aria-label={texts.auth.tabsLabel}>
                 <button
                   type="button"
                   aria-pressed={view === "login"}
                   disabled={isSubmitting}
                   onClick={() => changeView("login")}
                 >
-                  Fazer login
+                  {texts.auth.login.tab}
                 </button>
                 <button
                   type="button"
@@ -545,7 +537,7 @@ function AuthPanel() {
                   disabled={isSubmitting}
                   onClick={() => changeView("cadastro")}
                 >
-                  Criar conta
+                  {texts.auth.signup.tab}
                 </button>
               </div>
 
@@ -562,7 +554,7 @@ function AuthPanel() {
                 <div className="auth-panel-fields" key={view}>
                   {/* Campo do nome de usuário. */}
                   <div className="auth-panel-field">
-                    <label htmlFor="auth-username">Nome de usuário</label>
+                    <label htmlFor="auth-username">{texts.auth.fields.username}</label>
                     <input
                       id="auth-username"
                       name="username"
@@ -570,7 +562,7 @@ function AuthPanel() {
                       autoComplete="username"
                       maxLength={150}
                       defaultValue={prefilledUsername}
-                      placeholder="Seu usuário"
+                      placeholder={texts.auth.fields.usernamePlaceholder}
                       disabled={isSubmitting}
                       required
                     />
@@ -578,14 +570,14 @@ function AuthPanel() {
 
                   {/* Campo da senha. */}
                   <div className="auth-panel-field">
-                    <label htmlFor="auth-password">Senha</label>
+                    <label htmlFor="auth-password">{texts.auth.fields.password}</label>
                     <input
                       id="auth-password"
                       name="password"
                       type="password"
                       autoComplete={view === "login" ? "current-password" : "new-password"}
                       maxLength={64}
-                      placeholder="Sua senha"
+                      placeholder={texts.auth.fields.passwordPlaceholder}
                       disabled={isSubmitting}
                       required
                     />
@@ -593,14 +585,14 @@ function AuthPanel() {
 
                   {/* Campo de e-mail opcional, ativo apenas no cadastro. */}
                   <div className="auth-panel-field auth-panel-email" aria-hidden={view !== "cadastro"} inert={view !== "cadastro"}>
-                    <label htmlFor="auth-email">E-mail <span>(opcional)</span></label>
+                    <label htmlFor="auth-email">{texts.auth.fields.email} <span>{texts.auth.fields.optional}</span></label>
                     <input
                       id="auth-email"
                       name="email"
                       type="email"
                       autoComplete="email"
                       maxLength={254}
-                      placeholder="voce@exemplo.com"
+                      placeholder={texts.auth.fields.emailPlaceholder}
                       disabled={view !== "cadastro" || isSubmitting}
                     />
                   </div>
@@ -610,9 +602,9 @@ function AuthPanel() {
                 <div className="auth-panel-actions">
                   <button className="auth-panel-submit" type="submit" disabled={isSubmitting}>
                     <span className="auth-panel-submit-label" key={`${view}-${submitState}`}>
-                      {submitState === "cadastro" ? "Criando conta…"
-                        : submitState === "login" ? "Entrando…"
-                          : view === "login" ? "Entrar" : "Criar conta"}
+                      {submitState === "cadastro" ? texts.auth.signup.submitting
+                        : submitState === "login" ? texts.auth.login.submitting
+                          : view === "login" ? texts.auth.login.submit : texts.auth.signup.submit}
                     </span>
                     {(submitState === "login" || submitState === "cadastro") && (
                       <svg className="auth-panel-spinner" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -624,7 +616,9 @@ function AuthPanel() {
                   <div className="auth-panel-feedback" data-warning={notice?.type === "warning"} ref={feedback}>
                     {isSubmitting && (
                       <p className="auth-panel-wait" role="status">
-                        Aguarde, estamos {submitState === "cadastro" ? "criando sua conta" : submitState === "google" ? "confirmando seu acesso com o Google" : "confirmando seu acesso"}…
+                        {submitState === "cadastro" ? texts.auth.signup.wait
+                          : submitState === "google" ? texts.auth.google.wait
+                            : texts.auth.login.wait}
                       </p>
                     )}
                     {notice && (

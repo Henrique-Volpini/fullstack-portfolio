@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { texts } from "../../texts";
 
 // Propriedades do botão: o texto a copiar e o rótulo de acessibilidade.
 type CopyLinkButtonProps = {
@@ -32,7 +33,7 @@ function CopyLinkButton({ value, label }: CopyLinkButtonProps) {
       type="button"
       onClick={copy}
       aria-label={label}
-      title={copied ? "Copiado!" : label}
+      title={copied ? texts.copyLink.copiedTitle : label}
       data-copied={copied}
     >
       <svg
@@ -61,7 +62,7 @@ function CopyLinkButton({ value, label }: CopyLinkButtonProps) {
         <path d="m5 12.5 4.5 4.5L19 7" />
       </svg>
       <span className="copy-link-status" role="status">
-        {copied ? "Copiado" : ""}
+        {copied ? texts.copyLink.copiedStatus : ""}
       </span>
     </button>
   );

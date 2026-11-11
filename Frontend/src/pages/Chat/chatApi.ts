@@ -1,3 +1,5 @@
+import { texts } from "../../texts";
+
 export const apiUrl = (import.meta.env.VITE_API_URL?.trim() || "/api").replace(/\/+$/, "");
 
 // Com quem o visitante conversa: o Henrique ou o assistente de IA.
@@ -66,22 +68,22 @@ function apiDetail(data: unknown): string | null {
 
 // Converte o status HTTP de uma falha em mensagem amigável.
 function describeStatus(status: number, data: unknown, retryAfter: string | null): string {
-  if (status === 401) return "Sua sessão expirou. Entre novamente.";
+  if (status === 401) return texts.chat.errors.sessionExpired;
   if (status === 400 && data && typeof data === "object" && "conteudo" in data) {
-    return "A mensagem não pode ficar vazia nem passar de 4.000 caracteres.";
+    return texts.chat.errors.invalidMessage;
   }
-  if (status === 400) return "Não foi possível processar a solicitação.";
-  if (status === 403) return apiDetail(data) ?? "Ação não permitida.";
-  if (status === 404) return "Conversa não encontrada.";
-  if (status === 409) return "Esta mensagem já foi enviada com outro conteúdo.";
+  if (status === 400) return texts.chat.errors.badRequest;
+  if (status === 403) return apiDetail(data) ?? texts.chat.errors.forbidden;
+  if (status === 404) return texts.chat.errors.notFound;
+  if (status === 409) return texts.chat.errors.conflict;
   if (status === 429) {
     const seconds = Number.parseInt(retryAfter ?? "", 10);
     return Number.isFinite(seconds) && seconds > 0
-      ? `Muitas requisições. Tente de novo em ${seconds} s.`
-      : "Muitas requisições. Aguarde um instante e tente de novo.";
+      ? texts.chat.errors.tooManyRequestsIn(seconds)
+      : texts.chat.errors.tooManyRequests;
   }
-  if (status >= 500) return apiDetail(data) ?? "O chat está temporariamente indisponível. Tente novamente.";
-  return "Não foi possível concluir a solicitação.";
+  if (status >= 500) return apiDetail(data) ?? texts.chat.errors.unavailable;
+  return texts.chat.errors.failed;
 }
 
 // Leitor de resposta: devolve o valor com o formato conferido, ou undefined se ele não confere.
@@ -246,7 +248,7 @@ async function request<T>(
     });
   } catch (error) {
     if (signal?.aborted) throw error;
-    throw new ApiError(0, timeout.aborted ? "O servidor demorou para responder." : "Sem conexão com o servidor.");
+    throw new ApiError(0, timeout.aborted ? texts.chat.errors.timeout : texts.chat.errors.offline);
   }
 
   const data: unknown = response.status === 204 ? null : await response.json().catch(() => null);
@@ -256,7 +258,7 @@ async function request<T>(
   }
   const result = ler(data);
   if (result === undefined) {
-    throw new ApiError(response.status, "O servidor retornou uma resposta inválida.");
+    throw new ApiError(response.status, texts.chat.errors.invalidResponse);
   }
 
   return result;

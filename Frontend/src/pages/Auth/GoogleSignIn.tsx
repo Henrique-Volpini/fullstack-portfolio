@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { texts } from "../../texts";
 
 // Parte da API do Google Identity Services usada pelo botão.
 type GoogleIdentity = {
@@ -143,7 +144,7 @@ function GoogleSignIn({ active, disabled, mode, onCredential }: GoogleSignInProp
         shape: "rectangular",
         logo_alignment: "left",
         width,
-        locale: "pt-BR",
+        locale: texts.locale,
       });
     };
     // Adia o desenho até a largura estabilizar, pois o painel muda de tamanho ao abrir.
@@ -181,14 +182,14 @@ function GoogleSignIn({ active, disabled, mode, onCredential }: GoogleSignInProp
         {/* Status enquanto o Google não carregou: erro com nova tentativa ou aviso de carregamento. */}
         {!identity && (failed ? (
           <p className="auth-panel-google-status" role="alert">
-            Não foi possível carregar o login do Google.{" "}
-            <button type="button" onClick={retry}>Tentar de novo</button>
+            {texts.auth.google.loadFailed}{" "}
+            <button type="button" onClick={retry}>{texts.auth.google.retry}</button>
           </p>
         ) : (
-          <p className="auth-panel-google-status" role="status">Carregando o login do Google…</p>
+          <p className="auth-panel-google-status" role="status">{texts.auth.google.loading}</p>
         ))}
       </div>
-      <p className="auth-panel-divider" aria-hidden="true"><span>ou</span></p>
+      <p className="auth-panel-divider" aria-hidden="true"><span>{texts.auth.google.divider}</span></p>
     </div>
   );
 }
