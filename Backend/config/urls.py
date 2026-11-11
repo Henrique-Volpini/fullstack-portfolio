@@ -3,10 +3,11 @@ from django.urls import path
 from api.views import (
     CadastroUsuarioView, ChatInicioView, ConversaDetalheView, ConversasView,
     LeituraConversaView, LoginGoogleView, LoginUsuarioView,
-    LogoutUsuarioView, MensagensView,
+    LogoutUsuarioView, MensagensView, health,
 )
 
 urlpatterns = [
+    path("health/", health, name="health"),
     path("usuarios/", CadastroUsuarioView.as_view(), name="cadastro-usuario"),
     path("login/", LoginUsuarioView.as_view(), name="login-usuario"),
     path("login/google/", LoginGoogleView.as_view(), name="login-google"),

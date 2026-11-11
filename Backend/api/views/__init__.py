@@ -3,4 +3,5 @@ from .chat import (
     MensagensView,
 )
 from .google import LoginGoogleView
+from .health import health
 from .usuarios import CadastroUsuarioView, LoginUsuarioView, LogoutUsuarioView

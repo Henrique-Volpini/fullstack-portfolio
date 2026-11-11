@@ -13,7 +13,7 @@ db.sqlite3
 # Personal security notes
 /AGENTS.md
 /Pessoal.md
-minhasnotas.txt
+minhasnotas.md
 
 # Node / React / Vite
 node_modules/
