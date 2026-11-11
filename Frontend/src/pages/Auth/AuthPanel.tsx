@@ -18,10 +18,11 @@ const HEALTH_TIMEOUT_MS = 10000;
 const HEALTH_RETRY_MS = 30000;
 const HEALTH_MIN_NOTICE_MS = 1200;
 
-// Consulta o /health/ e diz se o servidor respondeu ok; qualquer falha conta como fora do ar.
+// Consulta o /servidor/ e diz se o servidor respondeu ok; qualquer falha conta como fora do ar.
+// Não é /health/: a lista EasyPrivacy dos bloqueadores de anúncio bloqueia onrender.com/health.
 async function checkServerHealth(signal: AbortSignal): Promise<boolean> {
   try {
-    const response = await fetch(`${apiUrl}/health/`, { credentials: "omit", signal });
+    const response = await fetch(`${apiUrl}/servidor/`, { credentials: "omit", signal });
     const data: unknown = await response.json().catch(() => null);
     return response.ok && !!data && typeof data === "object" && "status" in data && data.status === "ok";
   } catch {
@@ -155,7 +156,7 @@ function AuthPanel() {
     request.current = null;
   }, []);
 
-  // Ao entrar no site consulta o /health/, com prazo de 10 s; sem ok, tenta de novo a cada 30 s e para no primeiro ok.
+  // Ao entrar no site consulta o /servidor/, com prazo de 10 s; sem ok, tenta de novo a cada 30 s e para no primeiro ok.
   useEffect(() => {
     const startedAt = performance.now();
     let stopped = false;
@@ -548,7 +549,7 @@ function AuthPanel() {
                       : texts.auth.preview.serverOk}
                 </h2>
               </div>
-              {/* Desativado até o /health/ responder ok; no celular, fora do ar, o texto avisa a atualização. */}
+              {/* Desativado até o /servidor/ responder ok; no celular, fora do ar, o texto avisa a atualização. */}
               <button
                 className="auth-panel-open"
                 type="button"

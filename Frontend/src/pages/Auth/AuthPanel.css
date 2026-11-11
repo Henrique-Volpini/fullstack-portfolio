@@ -149,7 +149,7 @@
   transform: translateY(-1px);
 }
 
-/* Botão de abrir desativado enquanto o /health/ não confirma o servidor; o texto continua legível. */
+/* Botão de abrir desativado enquanto o /servidor/ não confirma o servidor; o texto continua legível. */
 .auth-panel-open:disabled {
   border-color: var(--color-border-strong);
   background: var(--color-transparent);

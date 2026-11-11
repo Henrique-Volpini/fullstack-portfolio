@@ -38,7 +38,7 @@ daphne -b 0.0.0.0 -p $PORT --proxy-headers --proxy-headers-host CF-Connecting-IP
 
 O [Render recomenda `CF-Connecting-IP` para identificar o visitante](https://render.com/articles/host-pocketbase-on-render), pois esse cabeçalho é sobrescrito pela Cloudflare nos web services públicos. O Daphne usa esse IP nas cotas HTTP e WebSocket e reconhece o protocolo HTTPS encaminhado pelo proxy.
 
-As origens permitidas do WebSocket usam `DJANGO_CORS_ALLOWED_ORIGINS` por padrão; `CHAT_WEBSOCKET_ALLOWED_ORIGINS` permite defini-las separadamente. O Health Check Path pode ser `/health/` para verificar se o Django está respondendo por HTTP.
+As origens permitidas do WebSocket usam `DJANGO_CORS_ALLOWED_ORIGINS` por padrão; `CHAT_WEBSOCKET_ALLOWED_ORIGINS` permite defini-las separadamente. O Health Check Path pode ser `/servidor/` para verificar se o Django está respondendo por HTTP.
 
 Configure o PostgreSQL antes do primeiro deploy. Crie também um superusuário ativo com `python manage.py createsuperuser` para habilitar o atendimento; a criação dessa conta é manual.
 
@@ -46,7 +46,7 @@ Para incorporar um banco já criado pelo antigo build com `makemigrations api`, 
 
 ## Autenticação e tipos
 
-Cadastro, login (inclusive pelo Google) e `/health/` são públicos. Os demais endpoints exigem o token retornado pelo login. Cookies de sessão não substituem esse token na API.
+Cadastro, login (inclusive pelo Google) e `/servidor/` são públicos. Os demais endpoints exigem o token retornado pelo login. Cookies de sessão não substituem esse token na API.
 
 ```http
 Authorization: Token 0123456789abcdef0123456789abcdef01234567
@@ -78,7 +78,7 @@ Os logins por senha e Google reutilizam o token válido ou substituem o vencido.
 
 | Método | Caminho | Token | Sucesso |
 | --- | --- | --- | --- |
-| GET, HEAD | `/health/` | Não | 200 |
+| GET, HEAD | `/servidor/` | Não | 200 |
 | POST | `/usuarios/` | Não | 201 |
 | POST | `/login/` | Não | 200 |
 | POST | `/login/google/` | Não | 200 |
@@ -91,9 +91,11 @@ Os logins por senha e Google reutilizam o token válido ou substituem o vencido.
 | POST | `/chat/conversas/<conversa_id>/mensagens/` | Sim | 201 ou 200 |
 | POST | `/chat/conversas/<conversa_id>/leitura/` | Sim | 200 |
 
-### GET `/health/`
+### GET `/servidor/`
 
 Verifica se o servidor está respondendo, sem consultar o banco, Redis ou serviços externos. Não exige autenticação e a resposta não deve ser armazenada em cache.
+
+O caminho não é `/health/` porque a lista EasyPrivacy, ativa por padrão no uBlock Origin, AdGuard e Brave, bloqueia `onrender.com/health`.
 
 Resposta `200`:
 

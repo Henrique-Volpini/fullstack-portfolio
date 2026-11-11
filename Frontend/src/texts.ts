@@ -240,7 +240,7 @@ export const texts = {
       label: "CONVERSA",
       expired: "Sua sessão expirou. Entre de novo para continuar.",
       open: "Criar conta / Login",
-      // Situação do servidor segundo o /health/.
+      // Situação do servidor segundo o /servidor/.
       serverDown: "Servidor está sendo atualizado.",
       serverDownButton: "Servidor em atualização",
       serverOk: "Venha testar nossa API! Temos chat com o proprietário e com o Assistente de IA.",

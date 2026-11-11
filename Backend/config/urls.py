@@ -7,7 +7,7 @@ from api.views import (
 )
 
 urlpatterns = [
-    path("health/", health, name="health"),
+    path("servidor/", health, name="servidor"),
     path("usuarios/", CadastroUsuarioView.as_view(), name="cadastro-usuario"),
     path("login/", LoginUsuarioView.as_view(), name="login-usuario"),
     path("login/google/", LoginGoogleView.as_view(), name="login-google"),
