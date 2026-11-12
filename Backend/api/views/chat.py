@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import logging
 from functools import partial
@@ -84,8 +85,11 @@ def publicar_evento(usuario_ids, dados, tipo="chat.evento"):
         return
     for usuario_id in set(usuario_ids):
         try:
-            async_to_sync(camada.group_send)(
-                grupo_usuario(usuario_id), {"type": tipo, "dados": dados}
+            async_to_sync(asyncio.wait_for)(
+                camada.group_send(
+                    grupo_usuario(usuario_id), {"type": tipo, "dados": dados}
+                ),
+                timeout=2,
             )
         except Exception:
             logger.warning("Não foi possível publicar um evento do chat; consulte o histórico.")

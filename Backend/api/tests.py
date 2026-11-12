@@ -2263,6 +2263,41 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
         self.assertEqual(resposta.status_code, 201)
         self.assertEqual(Mensagem.objects.count(), 1)
 
+    # Cancela a publicação pendente sem perder a confirmação nem o histórico HTTP.
+    def test_timeout_de_publicacao_preserva_confirmacao_e_historico_http(self):
+        esperar = asyncio.wait_for
+        canceladas = []
+
+        async def publicar_pendente(grupo, evento):
+            try:
+                # O limite interno evita prender o teste se a proteção for removida.
+                await esperar(asyncio.Event().wait(), timeout=0.2)
+            except asyncio.CancelledError:
+                canceladas.append(grupo)
+                raise
+
+        async def esperar_curto(aguardavel, timeout):
+            return await esperar(aguardavel, timeout=0.02)
+
+        with (
+            patch("api.views.chat.get_channel_layer") as camada,
+            patch("api.views.chat.asyncio", SimpleNamespace(wait_for=esperar_curto)),
+        ):
+            camada.return_value.group_send = AsyncMock(side_effect=publicar_pendente)
+            with self.assertLogs("api.views.chat", level="WARNING"):
+                with self.captureOnCommitCallbacks(execute=True):
+                    resposta = self.enviar_http()
+
+        self.assertEqual(resposta.status_code, 201)
+        self.assertEqual(Mensagem.objects.count(), 1)
+        self.assertCountEqual(canceladas, [
+            grupo_usuario(self.usuario.pk), grupo_usuario(self.operador.pk),
+            grupo_usuario(self.operador2.pk),
+        ])
+        historico = self.client.get(f"/chat/conversas/{self.conversa.pk}/mensagens/")
+        self.assertEqual(historico.status_code, 200)
+        self.assertEqual([mensagem["id"] for mensagem in historico.json()["results"]], [resposta.json()["id"]])
+
     # Confere respostas recuperáveis para falhas de banco no chat.
     def test_falha_de_banco_vira_erro_recuperavel_sem_detalhes_internos(self):
         from django.db import OperationalError
@@ -2278,6 +2313,39 @@ class ChatHTTPTests(DadosChatMixin, APITestCase):
             with self.assertLogs("api.views.chat", level="WARNING"):
                 publicar_evento((self.usuario.pk, self.operador.pk, self.operador2.pk), {"type": "teste"})
             self.assertEqual(camada.return_value.group_send.await_count, 3)
+
+    # Um grupo pendente não impede os demais nem repete destinatários duplicados.
+    def test_timeout_de_um_grupo_continua_publicacao_sem_duplicar_destinatarios(self):
+        esperar = asyncio.wait_for
+        tentadas, canceladas = [], []
+
+        async def publicar(grupo, evento):
+            tentadas.append(grupo)
+            if len(tentadas) == 1:
+                try:
+                    await esperar(asyncio.Event().wait(), timeout=0.2)
+                except asyncio.CancelledError:
+                    canceladas.append(grupo)
+                    raise
+
+        async def esperar_curto(aguardavel, timeout):
+            return await esperar(aguardavel, timeout=0.02)
+
+        with (
+            patch("api.views.chat.get_channel_layer") as camada,
+            patch("api.views.chat.asyncio", SimpleNamespace(wait_for=esperar_curto)),
+        ):
+            camada.return_value.group_send = AsyncMock(side_effect=publicar)
+            with self.assertLogs("api.views.chat", level="WARNING"):
+                publicar_evento((
+                    self.usuario.pk, self.operador.pk, self.usuario.pk, self.operador2.pk,
+                ), {"type": "teste"})
+
+        self.assertCountEqual(tentadas, [
+            grupo_usuario(self.usuario.pk), grupo_usuario(self.operador.pk),
+            grupo_usuario(self.operador2.pk),
+        ])
+        self.assertEqual(canceladas, tentadas[:1])
 
     # Confere as restrições de conversa e identidade aplicadas pelo banco.
     def test_integridade_da_conversa_e_da_identidade_no_banco(self):
@@ -2864,6 +2932,47 @@ class ChatWebsocketTests(DadosChatMixin, TransactionTestCase):
             await operador.receive_json_from()
             historico = await database_sync_to_async(self.client.get)(f"/chat/conversas/{self.conversa.pk}/mensagens/")
             self.assertEqual(len(historico.json()["results"]), 2)
+
+    # Libera a confirmação e a operação de outro socket após cancelar a publicação.
+    async def test_timeout_de_publicacao_libera_confirmacao_e_outro_websocket(self):
+        esperar = asyncio.wait_for
+        iniciou = asyncio.Event()
+        canceladas = []
+
+        async def publicar_pendente(grupo, evento):
+            iniciou.set()
+            try:
+                await esperar(asyncio.Event().wait(), timeout=0.2)
+            except asyncio.CancelledError:
+                canceladas.append(grupo)
+                raise
+
+        async def esperar_curto(aguardavel, timeout):
+            return await esperar(aguardavel, timeout=0.02)
+
+        async with self.conexoes() as conectar:
+            usuario = await conectar(self.token)
+            outro = await conectar(self.token_outro)
+            with (
+                patch("api.views.chat.get_channel_layer") as camada,
+                patch("api.views.chat.asyncio", SimpleNamespace(wait_for=esperar_curto)),
+                self.assertLogs("api.views.chat", level="WARNING"),
+            ):
+                camada.return_value.group_send = AsyncMock(side_effect=publicar_pendente)
+                await usuario.send_json_to({
+                    "type": "mensagem.enviar", "conversa_id": str(self.conversa.pk),
+                    "conteudo": "Publicação sem resposta", "id_cliente": str(uuid.uuid4()),
+                })
+                await esperar(iniciou.wait(), timeout=1)
+                # O ping revalida o token pelo mesmo executor de database_sync_to_async.
+                await outro.send_json_to({"type": "ping"})
+                confirmada = await usuario.receive_json_from(timeout=1)
+                self.assertEqual(confirmada["type"], "mensagem.confirmada")
+                self.assertEqual((await outro.receive_json_from(timeout=1))["type"], "pong")
+
+            self.assertEqual(len(canceladas), 3)
+            self.assertEqual(await Mensagem.objects.acount(), 1)
+            self.assertEqual((await Mensagem.objects.aget()).pk, confirmada["mensagem"]["id"])
 
     # Confere os avisos de conversa nova ao visitante e aos operadores.
     async def test_conversa_nova_e_notificada_ao_visitante_e_aos_operadores(self):
