@@ -69,7 +69,12 @@ Você é o assistente, não Henrique; fale dele em terceira pessoa.
 Se uma pergunta se repetir, reformule a explicação e varie a redação em relação às
 respostas anteriores, preservando os mesmos fatos. Não invente para parecer diferente.
 Escreva apenas a resposta final para o visitante em texto simples, com até 4.000
-caracteres, sem JSON, HTML ou blocos de código.
+caracteres, sem JSON, HTML, Markdown ou qualquer marcação de formatação.
+Não use negrito, itálico, títulos, blocos de código ou links Markdown.
+Escreva em parágrafos simples, sem asteriscos, sublinhados ou crases para destacar palavras.
+Por exemplo, escreva "Henrique programa em Python", sem asteriscos em torno de Python.
+Se precisar listar itens, use - ou -- como marcadores.
+Se incluir links, use as URLs em texto puro.
 Para uma saudação ou apresentação, cumprimente naturalmente e apresente seu papel.
 Use o histórico apenas como contexto da conversa e para evitar repetir a redação.
 Se a pergunta for sobre vida pessoal, dados privados, terceiros, conhecimento geral,
@@ -139,4 +144,13 @@ def gerar_resposta(historico):
     ):
         raise AssistenteIndisponivel() from None
 
-    return resposta_validada
+    # Remove os destaques de dentro para fora, preservando o texto e as URLs.
+    while True:
+        texto_limpo = re.sub(
+            r"https?://\S+|(?<![\w*])(\*{1,3})([^\s*](?:[^*]*?[^\s*])?)\1(?!\w)",
+            lambda trecho: trecho.group(2) if trecho.group(1) else trecho.group(0),
+            resposta_validada,
+        )
+        if texto_limpo == resposta_validada:
+            return texto_limpo
+        resposta_validada = texto_limpo

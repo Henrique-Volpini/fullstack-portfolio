@@ -584,6 +584,45 @@ class GeminiTests(SimpleTestCase):
                 self.simular_resposta(resposta)
                 self.assertEqual(self.ia.gerar_resposta(self.historico), resposta)
 
+    # Remove destaques sem perder palavras, parágrafos ou marcadores de lista.
+    def test_destaques_com_asteriscos_sao_removidos_sem_alterar_conteudo(self):
+        respostas = (
+            ("Henrique programa em **Python**.", "Henrique programa em Python."),
+            ("**Python** e **Django**.", "Python e Django."),
+            ("Henrique usa *Python* e ***Django***.", "Henrique usa Python e Django."),
+            ("**Python e *Django***", "Python e Django"),
+            ("*Henrique usa **Python** e Django*", "Henrique usa Python e Django"),
+            ("**Python e *Django* no backend**", "Python e Django no backend"),
+            ("***Python e **Django*****", "Python e Django"),
+            ("**Python e\nDjango**", "Python e\nDjango"),
+            ("- **Python**\n-- **Django**", "- Python\n-- Django"),
+            ("**Python**\n\nContato: henriquev.comp@gmail.com", "Python\n\nContato: henriquev.comp@gmail.com"),
+            ("**https://github.com/Henrique-Volpini**", "https://github.com/Henrique-Volpini"),
+            ("**Python ** e **Django**", "**Python ** e Django"),
+        )
+        for resposta, esperado in respostas:
+            with self.subTest(resposta=resposta):
+                self.simular_resposta(resposta)
+                self.assertEqual(self.ia.gerar_resposta(self.historico), esperado)
+
+    # Preserva asteriscos literais, contatos, links e texto sem destaque.
+    def test_limpeza_preserva_texto_e_asteriscos_que_nao_sao_destaques(self):
+        respostas = (
+            self.texto_resposta,
+            "- Python\n-- Django\n* TypeScript",
+            "2 * 3 = 6; 2 ** 3 = 8; 2**3 + 4**5.",
+            "a*b*c e a**b + c**d",
+            "Contato: nome_sobrenome@example.com",
+            "https://example.com/perfil_completo?busca=**Python**",
+            "Henrique usa **Python sem o fechamento.",
+            "*Python\n* TypeScript",
+            "****",
+        )
+        for resposta in respostas:
+            with self.subTest(resposta=resposta):
+                self.simular_resposta(resposta)
+                self.assertEqual(self.ia.gerar_resposta(self.historico), resposta)
+
     # Confere o histórico limitado e o envio da chave apenas no cabeçalho.
     def test_requisicao_usa_texto_historico_limitado_e_chave_somente_no_cabecalho(self):
         historico = [
