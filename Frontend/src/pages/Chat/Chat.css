@@ -749,6 +749,14 @@
   font-size: 0.86rem;
 }
 
+/* Mantém a digitação sem zoom automático no Safari do iPhone. */
+@media (max-width: 680px) {
+  .chat-composer textarea,
+  .chat[data-mode="mini"] .chat-composer textarea {
+    font-size: max(1rem, 16px);
+  }
+}
+
 .chat[data-mode="mini"] .chat-send {
   width: 2.3rem;
   height: 2.3rem;

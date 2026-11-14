@@ -1356,8 +1356,8 @@ html:has(.privacy-dialog[open]) {
   }
 }
 
-/* Telas de até 420 px. */
-@media (max-width: 420px) {
+/* Mantém as colunas até o limite equivalente a 420 px na escala de 80%. */
+@media (max-width: 336px) {
   .home-nav-links {
     flex-wrap: wrap;
     justify-content: flex-start;
@@ -1381,22 +1381,5 @@ html:has(.privacy-dialog[open]) {
 
   .stack-list {
     grid-template-columns: 1fr;
-  }
-}
-
-/* Telas de até 359 px. */
-@media (max-width: 359px) {
-  .theme-toggle {
-    right: -0.5rem;
-    padding-inline: 0.5rem;
-  }
-
-  .theme-toggle-label {
-    display: none;
-  }
-
-  .theme-toggle-dot {
-    width: 1rem;
-    height: 1rem;
   }
 }

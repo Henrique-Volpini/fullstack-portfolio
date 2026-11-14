@@ -13,6 +13,13 @@ html {
   scroll-behavior: smooth;
 }
 
+/* No celular, reduz em 20% as medidas em rem sem alterar o zoom do navegador. */
+@media (max-width: 680px) {
+  html {
+    font-size: 90%;
+  }
+}
+
 /* Fundo, cor e fonte padrão do site. */
 body {
   min-width: 320px;

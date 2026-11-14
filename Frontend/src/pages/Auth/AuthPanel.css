@@ -631,6 +631,11 @@
 
 /* Telas estreitas: o painel fechado vira um botão compacto. */
 @media (max-width: 680px) {
+  /* Evita o zoom automático dos campos no Safari do iPhone. */
+  .auth-panel-form input {
+    font-size: max(1rem, 16px);
+  }
+
   .auth-panel:not([data-open="true"]) {
     bottom: 0.75rem;
     right: 0.75rem;
@@ -666,7 +671,7 @@
 }
 
 /* Celulares pequenos: o painel aberto ocupa quase a tela inteira. */
-@media (max-width: 420px) {
+@media (max-width: 336px) {
   .auth-panel {
     bottom: 0.75rem;
     right: 0.75rem;
