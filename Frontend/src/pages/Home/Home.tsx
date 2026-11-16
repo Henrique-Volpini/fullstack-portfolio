@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type KeyboardEvent, type TransitionEvent } from "react";
+import { Fragment, memo, useEffect, useRef, useState, type KeyboardEvent, type TransitionEvent } from "react";
 import banestesLogo from "../../assets/banestes-logo.png";
 import profilePhoto from "../../assets/perfil-henrique.webp";
 import { texts } from "../../texts";
@@ -30,7 +30,7 @@ const aboutSections: AboutSection[] = (["profile", "education", "work", "focus"]
 }));
 
 // Corpo de uma seção do Sobre mim: logo opcional, parágrafos e quadro de detalhes.
-function AboutBody({ section }: { section: AboutSection }) {
+const AboutBody = memo(function AboutBody({ section }: { section: AboutSection }) {
   return (
     <>
       {/* Logo da empresa atual, só na seção de trabalho. */}
@@ -67,13 +67,66 @@ function AboutBody({ section }: { section: AboutSection }) {
       </div>
     </>
   );
+});
+
+// Mantém as interações da stack locais, sem renderizar novamente o restante da página.
+function TechnologyStack() {
+  const [hoveredStack, setHoveredStack] = useState<number | null>(null);
+  const [focusedStack, setFocusedStack] = useState<number | null>(null);
+  const activeStack = hoveredStack ?? focusedStack;
+
+  return (
+    <section
+      className="home-stack home-container"
+      id="stack"
+      aria-labelledby="stack-title"
+      tabIndex={-1}
+      data-reveal=""
+    >
+      <div className="section-heading">
+        <span aria-hidden="true">02</span>
+        <h2 id="stack-title">{texts.stack.title}</h2>
+      </div>
+
+      {/* Lista de tecnologias. */}
+      <ul className="stack-list">
+        {texts.stack.technologies.map((technology, index) => (
+          <li
+            className="stack-item"
+            key={technology.name}
+            tabIndex={0}
+            data-active={activeStack === index}
+            aria-describedby={`stack-description-${index}`}
+            onMouseEnter={() => setHoveredStack(index)}
+            onMouseLeave={() => setHoveredStack(null)}
+            onFocus={() => setFocusedStack(index)}
+            onBlur={() => setFocusedStack(null)}
+          >
+            <span className="stack-name">{technology.name}</span>
+            <span
+              className="stack-description"
+              id={`stack-description-${index}`}
+              role="tooltip"
+              data-open={activeStack === index}
+              data-dismissed={activeStack !== null && activeStack !== index}
+              aria-hidden={activeStack !== index}
+            >
+              <span className="stack-description-content">
+                <span>{technology.description}</span>
+              </span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
 }
 
-let scrollFrame = 0;
+let cancelScroll: (() => void) | null = null;
 
 // Rola a página até a posição com animação própria, interrompida se o usuário rolar ou digitar.
 function scrollToY(targetY: number) {
-  cancelAnimationFrame(scrollFrame);
+  cancelScroll?.();
 
   const startY = window.scrollY;
   const distance = targetY - startY;
@@ -86,12 +139,15 @@ function scrollToY(targetY: number) {
   const duration = Math.min(1100, Math.max(450, Math.abs(distance) * 0.55));
   const startTime = performance.now();
   const interruptions = ["wheel", "touchstart", "keydown"] as const;
+  let scrollFrame = 0;
 
   // Cancela a animação e remove os ouvintes de interrupção.
   const stop = () => {
     cancelAnimationFrame(scrollFrame);
     interruptions.forEach((type) => window.removeEventListener(type, stop));
+    cancelScroll = null;
   };
+  cancelScroll = stop;
   interruptions.forEach((type) => window.addEventListener(type, stop, { passive: true }));
 
   // Avança um quadro da rolagem com aceleração e desaceleração suaves.
@@ -113,9 +169,6 @@ function Home() {
   const [displayedAbout, setDisplayedAbout] = useState<AboutSectionId>("profile");
   const [detailsPhase, setDetailsPhase] = useState<"idle" | "closing" | "opening">("idle");
   const requestedAbout = useRef<AboutSectionId>("profile");
-  const [hoveredStack, setHoveredStack] = useState<number | null>(null);
-  const [focusedStack, setFocusedStack] = useState<number | null>(null);
-  const activeStack = hoveredStack ?? focusedStack;
   const currentAbout =
     aboutSections.find((section) => section.id === displayedAbout) ?? aboutSections[0];
 
@@ -141,12 +194,19 @@ function Home() {
 
   useEffect(() => {
     const header = document.querySelector<HTMLElement>(".home-header");
+    let scrolled: boolean | undefined;
     const onScroll = () => {
-      header?.setAttribute("data-scrolled", String(window.scrollY > 24));
+      const next = window.scrollY > 24;
+      if (next === scrolled) return;
+      scrolled = next;
+      header?.setAttribute("data-scrolled", String(next));
     };
     window.addEventListener("scroll", onScroll, { passive: true });
     onScroll();
-    return () => window.removeEventListener("scroll", onScroll);
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      cancelScroll?.();
+    };
   }, []);
 
   // Seleciona uma seção do Sobre mim e inicia a troca animada.
@@ -375,49 +435,7 @@ function Home() {
         </section>
 
         {/* Stack: tecnologias com descrição ao passar o mouse ou focar. */}
-        <section
-          className="home-stack home-container"
-          id="stack"
-          aria-labelledby="stack-title"
-          tabIndex={-1}
-          data-reveal=""
-        >
-          <div className="section-heading">
-            <span aria-hidden="true">02</span>
-            <h2 id="stack-title">{texts.stack.title}</h2>
-          </div>
-
-          {/* Lista de tecnologias. */}
-          <ul className="stack-list">
-            {texts.stack.technologies.map((technology, index) => (
-              <li
-                className="stack-item"
-                key={technology.name}
-                tabIndex={0}
-                data-active={activeStack === index}
-                aria-describedby={`stack-description-${index}`}
-                onMouseEnter={() => setHoveredStack(index)}
-                onMouseLeave={() => setHoveredStack(null)}
-                onFocus={() => setFocusedStack(index)}
-                onBlur={() => setFocusedStack(null)}
-              >
-                <span className="stack-name">{technology.name}</span>
-                <span
-                  className="stack-description"
-                  id={`stack-description-${index}`}
-                  role="tooltip"
-                  data-open={activeStack === index}
-                  data-dismissed={activeStack !== null && activeStack !== index}
-                  aria-hidden={activeStack !== index}
-                >
-                  <span className="stack-description-content">
-                    <span>{technology.description}</span>
-                  </span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
+        <TechnologyStack />
 
         {/* Contato: links diretos e currículo. */}
         <section

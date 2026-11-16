@@ -1,5 +1,7 @@
 import {
   Component,
+  memo,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -119,18 +121,25 @@ function buildRows(messages: UiMessage[], operator: boolean, otherMarker: number
   return rows;
 }
 
-// Rola o elemento até a posição com animação suave.
+// Rola o elemento suavemente e devolve a função de cancelamento.
 function smoothScroll(element: HTMLElement, target: number, duration = 320) {
   const start = element.scrollTop;
   const distance = target - start;
   const startedAt = performance.now();
+  let frame = 0;
+  const stop = () => cancelAnimationFrame(frame);
+
+  if (distance === 0) return stop;
+
   // Avança um quadro da animação de rolagem.
   const step = (now: number) => {
     const progress = Math.min(1, (now - startedAt) / duration);
     element.scrollTop = start + distance * (1 - (1 - progress) ** 3);
-    if (progress < 1) requestAnimationFrame(step);
+    if (progress < 1) frame = requestAnimationFrame(step);
+    else stop();
   };
-  requestAnimationFrame(step);
+  frame = requestAnimationFrame(step);
+  return stop;
 }
 
 // Ícone de seta para baixo (minimizar).
@@ -308,7 +317,7 @@ function Composer({
 }
 
 // Uma mensagem da conversa, com estados de envio, falha (tentar de novo ou descartar) e visto.
-function MessageRow({
+const MessageRow = memo(function MessageRow({
   row,
   awaitingAssistant,
   onRetry,
@@ -361,7 +370,7 @@ function MessageRow({
       {seen && !message.status && <span className="chat-state">{texts.chat.seen}</span>}
     </div>
   );
-}
+});
 
 // Conversa aberta: cabeçalho, histórico rolável, botão de recentes e campo de escrita.
 function ThreadView({
@@ -393,6 +402,8 @@ function ThreadView({
   const log = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const anchor = useRef<number | null>(null);
+  const scrollAnimation = useRef<(() => void) | null>(null);
+  const pendingResize = useRef<Animation | null>(null);
   const [atBottom, setAtBottom] = useState(true);
   const [intro, setIntro] = useState(true);
 
@@ -414,7 +425,11 @@ function ThreadView({
 
   useEffect(() => {
     const timer = window.setTimeout(() => setIntro(false), 1000);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      scrollAnimation.current?.();
+      pendingResize.current = null;
+    };
   }, []);
 
   useLayoutEffect(() => {
@@ -438,7 +453,14 @@ function ThreadView({
     const panel = element.closest<HTMLElement>(".auth-panel");
     const resizing = panel?.getAnimations()[0];
     if (resizing) {
-      void resizing.finished.catch(() => undefined).then(handleScroll);
+      if (pendingResize.current !== resizing) {
+        pendingResize.current = resizing;
+        void resizing.finished.catch(() => undefined).then(() => {
+          if (pendingResize.current !== resizing) return;
+          pendingResize.current = null;
+          if (log.current === element) handleScroll();
+        });
+      }
       return;
     }
     // Minimizado, o histórico quase não tem altura e a distância até o fim não significa nada.
@@ -458,8 +480,18 @@ function ThreadView({
   // Rola suavemente até a mensagem mais recente.
   const jumpToEnd = () => {
     const element = log.current;
-    if (element) smoothScroll(element, element.scrollHeight - element.clientHeight);
+    if (!element) return;
+    scrollAnimation.current?.();
+    scrollAnimation.current = smoothScroll(element, element.scrollHeight - element.clientHeight);
   };
+
+  const retryMessage = useCallback((clientId: string) => {
+    if (conversationId) store.retry(conversationId, clientId);
+  }, [store, conversationId]);
+
+  const discardMessage = useCallback((clientId: string) => {
+    if (conversationId) store.discard(conversationId, clientId);
+  }, [store, conversationId]);
 
   // Envia o rascunho pela store e limpa o campo.
   const send = () => {
@@ -549,8 +581,8 @@ function ThreadView({
               key={row.key}
               row={row}
               awaitingAssistant={awaitingAssistant}
-              onRetry={(clientId) => conversationId && store.retry(conversationId, clientId)}
-              onDiscard={(clientId) => conversationId && store.discard(conversationId, clientId)}
+              onRetry={retryMessage}
+              onDiscard={discardMessage}
             />
           ),
         )}
