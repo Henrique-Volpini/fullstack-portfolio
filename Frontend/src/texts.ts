@@ -137,12 +137,12 @@ export const texts = {
       {
         name: "Django REST Framework",
         description:
-          "Biblioteca escolhida e já instalada neste portfólio para estruturar a API que conectará o backend Django ao frontend.",
+          "Utilizado na API deste portfólio para validar dados e disponibilizar cadastro, login e conversas ao frontend.",
       },
       {
         name: "TypeScript",
         description:
-          "Utilizado no frontend deste portfólio para escrever componentes React com tipos mais seguros.",
+          "Utilizado com React no frontend deste portfólio, com tipos para os componentes, os dados da API e os estados do chat.",
       },
       {
         name: "JavaScript",
@@ -167,7 +167,7 @@ export const texts = {
     title: "Contato",
     eyebrow: "Vamos conversar",
     heading: "Links diretos, sem formulário.",
-    description: "Escolha o canal mais conveniente ou baixe a versão provisória do meu currículo.",
+    description: "Escolha o canal mais conveniente ou baixe meu currículo em PDF.",
     github: {
       kind: "GitHub",
       label: "GitHub de Henrique Volpini (abre em nova aba)",
@@ -219,11 +219,11 @@ export const texts = {
       },
       {
         term: "Assistente e Google",
-        text: "Sua mensagem ao assistente e as mais recentes dessa conversa (até 12 no total) são enviadas ao Google, pela API Gemini, para escolher qual informação do portfólio responder. Conversas diretas comigo não passam pelo Google. Evite escrever dados pessoais ao assistente.",
+        text: "Quando o assistente automático está ativo, sua mensagem e as mais recentes dessa conversa (até 12 no total) são enviadas ao Google, pela API Gemini, para gerar respostas sobre as informações profissionais publicadas neste portfólio. Conversas diretas comigo não passam pelo Google. Evite escrever dados pessoais ao assistente.",
       },
       {
         term: "No seu navegador",
-        text: "O tema escolhido fica no navegador até você limpar os dados do site. Depois do login, um código de acesso temporário vale só para a aba aberta e some quando você sai ou a fecha. Não uso cookies nem análise de visitas; o botão de login do Google carrega um script do Google, com a política dele.",
+        text: "O tema escolhido fica no navegador até você limpar os dados do site. Depois do login, o código de acesso é guardado só na aba aberta e removido do navegador quando você sai ou a fecha. Fechar a aba não encerra a sessão no servidor: ela termina quando o código expira ou o logout é confirmado. Não uso cookies nem análise de visitas; o botão de login do Google carrega um script do Google, com a política dele.",
       },
       {
         term: "Prazo e exclusão",
@@ -241,9 +241,9 @@ export const texts = {
       expired: "Sua sessão expirou. Entre de novo para continuar.",
       open: "Criar conta / Login",
       // Situação do servidor segundo o /servidor/.
-      serverDown: "Servidor está sendo atualizado.",
-      serverDownButton: "Servidor em atualização",
-      serverOk: "Venha testar nossa API! Temos chat com o proprietário e com o Assistente de IA.",
+      serverDown: "Aguardando o chat ficar disponível.",
+      serverDownButton: "Chat indisponível",
+      serverOk: "Converse comigo ou com o assistente do portfólio.",
     },
     dialogLabel: "ACESSO",
     close: "Fechar janela de login e cadastro",
@@ -348,7 +348,7 @@ export const texts = {
     threadLabel: (recipient: string) => `Conversa com ${recipient}`,
     backLabel: "Voltar para a caixa de entrada",
     assistantNote:
-      "O Assistente ainda não responde sozinho. Sua mensagem fica registrada e o Henrique pode responder por aqui.",
+      "As respostas automáticas do assistente estão desativadas. Sua mensagem fica registrada e o Henrique pode responder por aqui.",
     loading: "Carregando…",
     olderMessages: "Mensagens anteriores",
     empty: "Nenhuma mensagem ainda.",
