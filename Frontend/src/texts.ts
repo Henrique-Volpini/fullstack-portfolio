@@ -242,7 +242,7 @@ export const texts = {
       open: "Criar conta / Login",
       // Situação do servidor segundo o /servidor/.
       serverDown: "Aguardando o chat ficar disponível.",
-      serverDownButton: "Chat indisponível",
+      serverDownButton: "Servidor está atualizando",
       serverOk: "Converse comigo ou com o assistente do portfólio.",
     },
     dialogLabel: "ACESSO",
