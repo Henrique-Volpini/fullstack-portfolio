@@ -523,12 +523,12 @@ function Home() {
               </li>
               <li>
                 <CopyLinkButton
-                  value={new URL(`${import.meta.env.BASE_URL}curriculo-henrique-volpini.pdf`, window.location.origin).href}
+                  value={new URL(`${import.meta.env.BASE_URL}Henrique_Volpini_Curriculo.pdf`, window.location.origin).href}
                   label={texts.contact.resume.copy}
                 />
                 <a
-                  href={`${import.meta.env.BASE_URL}curriculo-henrique-volpini.pdf`}
-                  download="curriculo-henrique-volpini.pdf"
+                  href={`${import.meta.env.BASE_URL}Henrique_Volpini_Curriculo.pdf`}
+                  download="Henrique_Volpini_Curriculo.pdf"
                 >
                   <span>
                     <small>{texts.contact.resume.kind}</small>
